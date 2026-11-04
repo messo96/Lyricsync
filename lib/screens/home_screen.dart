@@ -54,21 +54,29 @@ class _HomeScreenState extends State<HomeScreen> {
       _statusText = 'Ascolto del concerto in corso (44.1 kHz)...';
     });
 
+    String? samplePath;
     try {
-      final samplePath = await _audioRecorder.startListening();
+      samplePath = await _audioRecorder.startListening();
 
-      // Registra per 3.5 secondi per isolare l'impronta musicale dal rumore del pubblico
-      await Future.delayed(const Duration(milliseconds: 3500));
+      // Registra per 5 secondi per ottenere un campione audio sufficiente per AudD
+      await Future.delayed(const Duration(milliseconds: 5000));
 
       if (mounted) {
         setState(() {
-          _statusText = 'Identificazione brano e aggancio testi LRC...';
+          _statusText = 'Identificazione brano in corso...';
         });
       }
 
       await _audioRecorder.stopListening();
 
-      // Riconoscimento e calcolo offset rispetto all'esecuzione sul palco
+      if (mounted) {
+        setState(() {
+          _statusText = 'Cercando testi sincronizzati...';
+        });
+      }
+
+      // Riconoscimento REALE via AudD + LRCLIB.
+      // Lancia SongNotRecognizedException se nulla viene trovato.
       final syncedSong = await _recognitionService.recognizeFromAudioSample(
         sampleAudioPath: samplePath,
       );
@@ -80,7 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
         });
         _loadHistory();
 
-        // Apri subito il teleprompter con il testo sincronizzato
+        // Apri il teleprompter SOLO se il brano è stato rilevato davvero
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -91,21 +99,86 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
+    } on SongNotRecognizedException catch (e) {
+      // Brano non rilevato: mostra messaggio chiaro, non apriamo nulla
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+          _statusText = 'Tocca per ascoltare e sincronizzare il testo';
+        });
+        _showNotDetectedDialog(e.message);
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isListening = false;
           _statusText = 'Tocca per ascoltare e sincronizzare il testo';
         });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Attenzione: $e'),
-            backgroundColor: const Color(0xFFDC2626),
-          ),
+        _showNotDetectedDialog(
+          'Errore durante il rilevamento. Verifica la connessione internet e riprova.',
         );
       }
     }
+  }
+
+  void _showNotDetectedDialog(String message) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.music_off_rounded, color: AppTheme.accentAmber, size: 22),
+            SizedBox(width: 10),
+            Text(
+              'Canzone non rilevata',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(
+            color: AppTheme.textSecondary,
+            fontSize: 14,
+            height: 1.5,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text(
+              'OK',
+              style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.w600),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SearchScreen(recognitionService: _recognitionService),
+                ),
+              );
+            },
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.search_rounded, size: 16),
+                SizedBox(width: 6),
+                Text('Cerca Manualmente'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _openSong(SyncedSong song) {

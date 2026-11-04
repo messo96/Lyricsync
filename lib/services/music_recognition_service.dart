@@ -1,49 +1,183 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../data/concert_setlists.dart';
 import '../models/synced_song.dart';
+
+/// Eccezione lanciata quando il fingerprinting audio non trova nessuna corrispondenza
+class SongNotRecognizedException implements Exception {
+  final String message;
+  const SongNotRecognizedException([this.message = 'Canzone non rilevata']);
+  @override
+  String toString() => message;
+}
 
 class MusicRecognitionService {
   final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 6),
-    receiveTimeout: const Duration(seconds: 6),
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 10),
+    headers: {
+      'User-Agent': 'LyricSync/1.0 (Concert lyrics app)',
+    },
   ));
 
   static const String _historyKey = 'lyricsync_history_v1';
 
-  /// Riconoscimento intelligente dal vivo (campionamento microfonico + calcolo offset)
+  /// Riconoscimento reale tramite AudD API (free, no key) + testi da LRCLIB.
+  /// Lancia [SongNotRecognizedException] se il brano non viene rilevato.
   Future<SyncedSong> recognizeFromAudioSample({
     required String? sampleAudioPath,
-    int simulatedOffsetSec = 15,
   }) async {
-    // 1. Prova prima la ricerca o fallback intelligente dal vivo
-    // In un concerto reale senza chiavi API o con rete debole, attinge al catalogo da stadio
-    await Future.delayed(const Duration(milliseconds: 900));
+    if (sampleAudioPath == null) {
+      throw const SongNotRecognizedException('Nessun campione audio disponibile.');
+    }
 
-    // Cicla o seleziona un brano iconico con offset calcolato sul vivo
-    final anthems = ConcertCatalog.stadiumAnthems;
-    final index = (DateTime.now().second) % anthems.length;
-    final selectedAnthem = anthems[index];
+    final file = File(sampleAudioPath);
+    if (!file.existsSync()) {
+      throw const SongNotRecognizedException('File audio del campione non trovato.');
+    }
 
-    // Simula l'offset di esecuzione reale catturato dal palco
-    final randomOffsetSec = 12 + (DateTime.now().millisecond % 45);
-    final detectedOffset = Duration(seconds: randomOffsetSec);
+    // ── 1. Fingerprinting con AudD (gratuito, no API key) ───────────────────
+    String? title;
+    String? artist;
+    String? album;
+    int? durationSec;
+
+    try {
+      final formData = FormData.fromMap({
+        'return': 'apple_music,spotify',
+        'file': await MultipartFile.fromFile(
+          sampleAudioPath,
+          filename: 'sample.m4a',
+          contentType: DioMediaType('audio', 'm4a'),
+        ),
+      });
+
+      final audDResponse = await _dio.post(
+        'https://api.audd.io/',
+        data: formData,
+        options: Options(
+          contentType: 'multipart/form-data',
+          receiveTimeout: const Duration(seconds: 15),
+          sendTimeout: const Duration(seconds: 15),
+        ),
+      );
+
+      debugPrint('AudD response: ${audDResponse.data}');
+
+      final responseData = audDResponse.data;
+      if (responseData is String) {
+        final decoded = jsonDecode(responseData) as Map<String, dynamic>;
+        final result = decoded['result'] as Map<String, dynamic>?;
+        if (result != null) {
+          title = result['title'] as String?;
+          artist = result['artist'] as String?;
+          album = result['album'] as String?;
+        }
+      } else if (responseData is Map<String, dynamic>) {
+        final result = responseData['result'] as Map<String, dynamic>?;
+        if (result != null) {
+          title = result['title'] as String?;
+          artist = result['artist'] as String?;
+          album = result['album'] as String?;
+        }
+      }
+    } catch (e) {
+      debugPrint('AudD API error: $e');
+      // Se l'API è irraggiungibile, lanciamo l'eccezione invece di fallback
+      throw const SongNotRecognizedException(
+        'Impossibile connettersi al servizio di riconoscimento musicale. Verifica la connessione internet.',
+      );
+    }
+
+    // Se AudD non ha trovato nulla, non apriamo niente
+    if (title == null || title.trim().isEmpty || artist == null || artist.trim().isEmpty) {
+      throw const SongNotRecognizedException(
+        'Nessuna canzone rilevata. Avvicina il telefono alla fonte audio e riprova.',
+      );
+    }
+
+    debugPrint('AudD rilevato: "$title" di "$artist"');
+
+    // ── 2. Cerca i testi sincronizzati (.LRC) su LRCLIB ──────────────────────
+    String rawLrc = '';
+    int actualDurationSec = durationSec ?? 180;
+
+    try {
+      final lrcResponse = await _dio.get(
+        'https://lrclib.net/api/get',
+        queryParameters: {
+          'track_name': title,
+          'artist_name': artist,
+          if (album != null && album.isNotEmpty) 'album_name': album,
+        },
+      );
+
+      if (lrcResponse.statusCode == 200 && lrcResponse.data is Map) {
+        final data = lrcResponse.data as Map<String, dynamic>;
+        rawLrc = data['syncedLyrics'] as String? ?? data['plainLyrics'] as String? ?? '';
+        final dur = data['duration'];
+        if (dur != null) {
+          actualDurationSec = (dur as num).round();
+        }
+      }
+    } catch (e) {
+      debugPrint('LRCLIB get error: $e — provo con search');
+    }
+
+    // Se get esatto fallisce, proviamo la ricerca generica su LRCLIB
+    if (rawLrc.isEmpty) {
+      try {
+        final searchResp = await _dio.get(
+          'https://lrclib.net/api/search',
+          queryParameters: {'q': '$artist $title'},
+        );
+
+        if (searchResp.statusCode == 200 && searchResp.data is List) {
+          final list = searchResp.data as List;
+          for (final item in list) {
+            final synced = item['syncedLyrics'] as String?;
+            if (synced != null && synced.trim().isNotEmpty) {
+              rawLrc = synced;
+              final dur = item['duration'];
+              if (dur != null) actualDurationSec = (dur as num).round();
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('LRCLIB search error: $e');
+      }
+    }
+
+    // Se non abbiamo testi LRC non ha senso aprire il teleprompter vuoto
+    if (rawLrc.isEmpty) {
+      throw SongNotRecognizedException(
+        '"$title" di $artist rilevata, ma nessun testo sincronizzato disponibile su LRCLIB.\nProva a cercarla manualmente con il tasto 🔍.',
+      );
+    }
+
+    final totalDuration = Duration(seconds: actualDurationSec);
+    final parsedLyrics = SyncedSong.parseLrc(rawLrc, totalDuration);
+
+    if (parsedLyrics.isEmpty) {
+      throw SongNotRecognizedException(
+        '"$title" trovata ma il formato LRC non è valido. Prova la ricerca manuale.',
+      );
+    }
 
     final syncedSong = SyncedSong(
-      id: '${selectedAnthem.id}-${DateTime.now().millisecondsSinceEpoch}',
-      title: selectedAnthem.title,
-      artist: selectedAnthem.artist,
-      album: selectedAnthem.album,
-      duration: selectedAnthem.duration,
-      detectedPlayOffset: detectedOffset,
+      id: 'mic-${DateTime.now().millisecondsSinceEpoch}',
+      title: title,
+      artist: artist,
+      album: album ?? 'Live Detection',
+      duration: totalDuration,
+      detectedPlayOffset: Duration.zero, // offset reale non calcolabile senza ACRCloud
       matchedAt: DateTime.now(),
-      bpm: selectedAnthem.bpm,
-      musicalKey: selectedAnthem.musicalKey,
       isLiveConcertVersion: true,
-      rawLrc: selectedAnthem.rawLrc,
-      lyrics: selectedAnthem.lyrics,
+      rawLrc: rawLrc,
+      lyrics: parsedLyrics,
     );
 
     await saveSongToHistory(syncedSong);
@@ -82,7 +216,7 @@ class MusicRecognitionService {
                 artist: artistName,
                 album: albumName,
                 duration: totalDuration,
-                detectedPlayOffset: const Duration(seconds: 5),
+                detectedPlayOffset: Duration.zero,
                 matchedAt: DateTime.now(),
                 isLiveConcertVersion: false,
                 rawLrc: syncedLyrics,
@@ -92,19 +226,13 @@ class MusicRecognitionService {
           }
         }
 
-        if (results.isNotEmpty) return results;
+        return results;
       }
     } catch (e) {
-      debugPrint('LRCLIB API fallback: $e');
+      debugPrint('LRCLIB search error: $e');
     }
 
-    // Fallback: cerca nel catalogo offline dei concerti
-    final queryLower = clean.toLowerCase();
-    return ConcertCatalog.stadiumAnthems.where((song) {
-      return song.title.toLowerCase().contains(queryLower) ||
-          song.artist.toLowerCase().contains(queryLower) ||
-          song.lyrics.any((line) => line.text.toLowerCase().contains(queryLower));
-    }).toList();
+    return [];
   }
 
   /// Salva il brano nella cronologia recente dell'utente
@@ -113,7 +241,6 @@ class MusicRecognitionService {
       final prefs = await SharedPreferences.getInstance();
       final historyList = await getHistory();
 
-      // Rimuovi duplicati recenti per stesso titolo e artista
       historyList.removeWhere((item) =>
           item.title.toLowerCase() == song.title.toLowerCase() &&
           item.artist.toLowerCase() == song.artist.toLowerCase());
@@ -153,4 +280,3 @@ class MusicRecognitionService {
     }
   }
 }
-
