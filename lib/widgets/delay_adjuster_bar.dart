@@ -16,6 +16,121 @@ class DelayAdjusterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final offsetSec = (offsetMs / 1000.0).toStringAsFixed(1);
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
+    if (isLandscape) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.surface.withValues(alpha: 0.95),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: offsetMs != 0
+                ? AppTheme.accentAmber.withValues(alpha: 0.5)
+                : const Color(0xFF1E293B),
+            width: 1.2,
+          ),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black87,
+              blurRadius: 14,
+              offset: Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.sync_rounded, size: 14, color: AppTheme.accentAmber),
+            const SizedBox(width: 6),
+            const Text(
+              'Sync Manuale',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: offsetMs != 0 ? onReset : null,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: offsetMs != 0
+                      ? AppTheme.accentAmber.withValues(alpha: 0.2)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    Text(
+                      offsetMs == 0 ? '0.0s' : '${offsetMs > 0 ? "+" : ""}${offsetSec}s',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        fontFamily: 'monospace',
+                        color: offsetMs != 0 ? AppTheme.accentAmber : AppTheme.textMuted,
+                      ),
+                    ),
+                    if (offsetMs != 0) ...[
+                      const SizedBox(width: 4),
+                      const Icon(Icons.restart_alt_rounded, size: 12, color: AppTheme.accentAmber),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const Spacer(),
+            _buildAdjustChip(
+              label: '-1.0s',
+              sublabel: null,
+              isNegative: true,
+              onTap: () => onAdjust(-1000),
+            ),
+            const SizedBox(width: 4),
+            _buildAdjustChip(
+              label: '-0.5s',
+              sublabel: null,
+              isNegative: true,
+              onTap: () => onAdjust(-500),
+            ),
+            const SizedBox(width: 4),
+            _buildAdjustChip(
+              label: '-0.2s',
+              sublabel: null,
+              isNegative: true,
+              onTap: () => onAdjust(-200),
+            ),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 6),
+              width: 1,
+              height: 20,
+              color: const Color(0xFF1E293B),
+            ),
+            _buildAdjustChip(
+              label: '+0.2s',
+              sublabel: null,
+              isNegative: false,
+              onTap: () => onAdjust(200),
+            ),
+            const SizedBox(width: 4),
+            _buildAdjustChip(
+              label: '+0.5s',
+              sublabel: null,
+              isNegative: false,
+              onTap: () => onAdjust(500),
+            ),
+            const SizedBox(width: 4),
+            _buildAdjustChip(
+              label: '+1.0s',
+              sublabel: null,
+              isNegative: false,
+              onTap: () => onAdjust(1000),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/synced_song.dart';
@@ -127,7 +128,26 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   void dispose() {
     _controller.removeListener(_onSyncUpdate);
     _controller.dispose();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
     super.dispose();
+  }
+
+  Future<void> _toggleOrientation() async {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    if (isLandscape) {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+    } else {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    }
   }
 
   String _formatDuration(Duration d) {
@@ -138,158 +158,198 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.background,
-      appBar: AppBar(
-        title: const Text('Live Teleprompter'),
-        actions: [
-          // Traduzione ON / OFF
-          IconButton(
-            tooltip: _showTranslation ? 'Nascondi traduzione' : 'Mostra traduzione',
-            icon: Icon(
-              Icons.translate_rounded,
-              color: _showTranslation ? AppTheme.accentCyan : AppTheme.textMuted,
-              size: 20,
-            ),
-            onPressed: () {
-              setState(() {
-                _showTranslation = !_showTranslation;
-              });
-            },
-          ),
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
 
-          // Scalatura dimensione caratteri
-          IconButton(
-            tooltip: 'Dimensione testo',
-            icon: Icon(
-              _fontScale > 1.0 ? Icons.text_increase_rounded : Icons.format_size_rounded,
-              color: _fontScale > 1.0 ? AppTheme.accentAmber : AppTheme.textSecondary,
-              size: 20,
-            ),
-            onPressed: () {
-              setState(() {
-                if (_fontScale >= 1.3) {
-                  _fontScale = 0.9;
-                } else if (_fontScale >= 1.0) {
-                  _fontScale = 1.3;
-                } else {
-                  _fontScale = 1.0;
-                }
-              });
-            },
-          ),
-
-          // Modalità Concert Glow (luce per concerto)
-          IconButton(
-            tooltip: 'Concert Glowstick Mode',
-            icon: Icon(
-              Icons.flare_rounded,
-              color: _isGlowEnabled ? AppTheme.accentAmber : AppTheme.textMuted,
-              size: 20,
-            ),
-            onPressed: () {
-              setState(() {
-                _isGlowEnabled = !_isGlowEnabled;
-              });
-            },
-          ),
-
-          // Play / Pause
-          IconButton(
-            tooltip: _controller.isPlaying ? 'Pausa' : 'Riprendi',
-            icon: Icon(
-              _controller.isPlaying ? Icons.pause_circle_rounded : Icons.play_circle_rounded,
-              color: AppTheme.accentAmber,
-              size: 26,
-            ),
-            onPressed: () => _controller.togglePlayPause(),
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // ── TOP HEADER CARD: Copertina, Titolo, Cantanti, Preferito (Cuore) e Spotify ──
-            _buildSongHeaderCard(),
-
-            // Banner concert glow
-            ConcertGlowBanner(
-              isEnabled: _isGlowEnabled,
-              onToggle: () => setState(() => _isGlowEnabled = !_isGlowEnabled),
+    return PopScope(
+      onPopInvokedWithResult: (didPop, result) {
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+        ]);
+      },
+      child: Scaffold(
+        backgroundColor: AppTheme.background,
+        appBar: AppBar(
+          title: Text(isLandscape ? 'LyricSync (Orizzontale)' : 'Live Teleprompter'),
+          actions: [
+            // Traduzione ON / OFF
+            IconButton(
+              tooltip: _showTranslation ? 'Nascondi traduzione' : 'Mostra traduzione',
+              icon: Icon(
+                Icons.translate_rounded,
+                color: _showTranslation ? AppTheme.accentCyan : AppTheme.textMuted,
+                size: 20,
+              ),
+              onPressed: () {
+                setState(() {
+                  _showTranslation = !_showTranslation;
+                });
+              },
             ),
 
-            const Divider(height: 1, color: Color(0xFF1E293B)),
-
-            // ── AREA CENTRALE: Lista testi con auto-scroll a 60fps ─────────────────
-            Expanded(
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (notification) {
-                  if (notification is ScrollStartNotification) {
-                    _isUserScrolling = true;
-                  } else if (notification is ScrollEndNotification) {
-                    Future.delayed(const Duration(seconds: 3), () {
-                      if (mounted) {
-                        setState(() {
-                          _isUserScrolling = false;
-                        });
-                      }
-                    });
+            // Scalatura dimensione caratteri
+            IconButton(
+              tooltip: 'Dimensione testo',
+              icon: Icon(
+                _fontScale > 1.0 ? Icons.text_increase_rounded : Icons.format_size_rounded,
+                color: _fontScale > 1.0 ? AppTheme.accentAmber : AppTheme.textSecondary,
+                size: 20,
+              ),
+              onPressed: () {
+                setState(() {
+                  if (_fontScale >= 1.3) {
+                    _fontScale = 0.9;
+                  } else if (_fontScale >= 1.0) {
+                    _fontScale = 1.3;
+                  } else {
+                    _fontScale = 1.0;
                   }
-                  return false;
-                },
-                child: ScrollablePositionedList.builder(
-                  itemScrollController: _scrollController,
-                  itemPositionsListener: _positionsListener,
-                  initialScrollIndex: _controller.activeLineIndex >= 0 ? _controller.activeLineIndex : 0,
-                  initialAlignment: 0.35,
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
-                  itemCount: widget.song.lyrics.length,
-                  itemBuilder: (context, index) {
-                    final line = widget.song.lyrics[index];
-                    final isActive = index == _controller.activeLineIndex;
-                    final isPast = index < _controller.activeLineIndex;
+                });
+              },
+            ),
 
-                    return TeleprompterLineTile(
-                      line: line,
-                      lineIndex: index,
-                      isActive: isActive,
-                      isPast: isPast,
-                      activeLineProgress: isActive ? _controller.activeLineProgress : 0.0,
-                      activeWordIndex: isActive ? _controller.activeWordIndex : -1,
-                      showTranslation: _showTranslation,
-                      fontScale: _fontScale,
-                      onTap: () {
-                        _controller.jumpToLine(index);
-                      },
-                    );
+            // ── PULSANTE ROTAZIONE SCHERMO (Orizzontale per gruppo / Verticale) ──
+            IconButton(
+              tooltip: isLandscape
+                  ? 'Ripristina orientamento verticale'
+                  : 'Gira lo schermo in orizzontale (visualizzazione di gruppo)',
+              icon: Icon(
+                isLandscape ? Icons.screen_lock_portrait_rounded : Icons.screen_rotation_rounded,
+                color: isLandscape ? AppTheme.accentAmber : AppTheme.textSecondary,
+                size: 22,
+              ),
+              onPressed: _toggleOrientation,
+            ),
+
+            // Modalità Concert Glow (luce per concerto)
+            IconButton(
+              tooltip: 'Concert Glowstick Mode',
+              icon: Icon(
+                Icons.flare_rounded,
+                color: _isGlowEnabled ? AppTheme.accentAmber : AppTheme.textMuted,
+                size: 20,
+              ),
+              onPressed: () {
+                setState(() {
+                  _isGlowEnabled = !_isGlowEnabled;
+                });
+              },
+            ),
+
+            // Play / Pause
+            IconButton(
+              tooltip: _controller.isPlaying ? 'Pausa' : 'Riprendi',
+              icon: Icon(
+                _controller.isPlaying ? Icons.pause_circle_rounded : Icons.play_circle_rounded,
+                color: AppTheme.accentAmber,
+                size: 26,
+              ),
+              onPressed: () => _controller.togglePlayPause(),
+            ),
+            const SizedBox(width: 4),
+          ],
+        ),
+        body: SafeArea(
+          child: Column(
+            children: [
+              // ── TOP HEADER CARD: Copertina, Titolo, Cantanti, Preferito (Cuore) e Spotify ──
+              _buildSongHeaderCard(isLandscape: isLandscape),
+
+              // Banner concert glow
+              if (!isLandscape || _isGlowEnabled)
+                ConcertGlowBanner(
+                  isEnabled: _isGlowEnabled,
+                  onToggle: () => setState(() => _isGlowEnabled = !_isGlowEnabled),
+                ),
+
+              const Divider(height: 1, color: Color(0xFF1E293B)),
+
+              // ── AREA CENTRALE: Lista testi con auto-scroll a 60fps ─────────────────
+              Expanded(
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification is ScrollStartNotification) {
+                      _isUserScrolling = true;
+                    } else if (notification is ScrollEndNotification) {
+                      Future.delayed(const Duration(seconds: 3), () {
+                        if (mounted) {
+                          setState(() {
+                            _isUserScrolling = false;
+                          });
+                        }
+                      });
+                    }
+                    return false;
                   },
+                  child: ScrollablePositionedList.builder(
+                    itemScrollController: _scrollController,
+                    itemPositionsListener: _positionsListener,
+                    initialScrollIndex: _controller.activeLineIndex >= 0 ? _controller.activeLineIndex : 0,
+                    initialAlignment: 0.35,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isLandscape ? 28 : 18,
+                      vertical: isLandscape ? 12 : 20,
+                    ),
+                    itemCount: widget.song.lyrics.length,
+                    itemBuilder: (context, index) {
+                      final line = widget.song.lyrics[index];
+                      final isActive = index == _controller.activeLineIndex;
+                      final isPast = index < _controller.activeLineIndex;
+
+                      return TeleprompterLineTile(
+                        line: line,
+                        lineIndex: index,
+                        isActive: isActive,
+                        isPast: isPast,
+                        activeLineProgress: isActive ? _controller.activeLineProgress : 0.0,
+                        activeWordIndex: isActive ? _controller.activeWordIndex : -1,
+                        showTranslation: _showTranslation,
+                        fontScale: _fontScale,
+                        onTap: () {
+                          _controller.jumpToLine(index);
+                        },
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
 
-            // ── SOTTO IL TESTO: Pannello di Sincronizzazione Manuale ─────────────
-            Padding(
-              padding: const EdgeInsets.only(left: 14, right: 14, bottom: 12, top: 4),
-              child: DelayAdjusterBar(
-                offsetMs: _controller.manualPhaseOffsetMs,
-                onAdjust: (delta) => _controller.adjustOffset(delta),
-                onReset: () => _controller.resetOffset(),
+              // ── SOTTO IL TESTO: Pannello di Sincronizzazione Manuale ─────────────
+              Padding(
+                padding: EdgeInsets.only(
+                  left: 14,
+                  right: 14,
+                  bottom: isLandscape ? 6 : 12,
+                  top: 2,
+                ),
+                child: DelayAdjusterBar(
+                  offsetMs: _controller.manualPhaseOffsetMs,
+                  onAdjust: (delta) => _controller.adjustOffset(delta),
+                  onReset: () => _controller.resetOffset(),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildSongHeaderCard() {
+  Widget _buildSongHeaderCard({required bool isLandscape}) {
+    final artworkSize = isLandscape ? 38.0 : 54.0;
+
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: isLandscape ? 3 : 6,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: isLandscape ? 6 : 10,
+      ),
       decoration: BoxDecoration(
         color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(isLandscape ? 14 : 18),
         border: Border.all(color: const Color(0xFF1E293B)),
         boxShadow: const [
           BoxShadow(
@@ -303,19 +363,19 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
         children: [
           // Copertina del brano (o placeholder musicale)
           ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(isLandscape ? 8 : 12),
             child: widget.song.coverArtUrl != null && widget.song.coverArtUrl!.isNotEmpty
                 ? Image.network(
                     widget.song.coverArtUrl!,
-                    width: 54,
-                    height: 54,
+                    width: artworkSize,
+                    height: artworkSize,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _buildArtworkPlaceholder(),
+                    errorBuilder: (_, __, ___) => _buildArtworkPlaceholder(size: artworkSize),
                   )
-                : _buildArtworkPlaceholder(),
+                : _buildArtworkPlaceholder(size: artworkSize),
           ),
 
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
 
           // Titolo, Cantanti & Minutaggio
           Expanded(
@@ -327,33 +387,35 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                   widget.song.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 15,
+                  style: TextStyle(
+                    fontSize: isLandscape ? 13 : 15,
                     fontWeight: FontWeight.w800,
                     color: AppTheme.textPrimary,
                     letterSpacing: -0.2,
                   ),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  widget.song.artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: AppTheme.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 4),
+                SizedBox(height: isLandscape ? 1 : 3),
                 Row(
                   children: [
-                    const Icon(Icons.timer_outlined, size: 12, color: AppTheme.accentAmber),
-                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        widget.song.artist,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: isLandscape ? 11 : 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.timer_outlined, size: 11, color: AppTheme.accentAmber),
+                    const SizedBox(width: 3),
                     Text(
                       '${_formatDuration(_controller.currentPosition)} / ${_formatDuration(widget.song.duration)}',
-                      style: const TextStyle(
-                        fontSize: 11,
+                      style: TextStyle(
+                        fontSize: isLandscape ? 10 : 11,
                         fontFamily: 'monospace',
                         fontWeight: FontWeight.w700,
                         color: AppTheme.textSecondary,
@@ -370,30 +432,34 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
           // Pulsante Cuore (Salva nei Preferiti)
           IconButton(
             tooltip: _isFavorite ? 'Rimuovi dai preferiti' : 'Salva nei preferiti',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
             icon: Icon(
               _isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
               color: _isFavorite ? const Color(0xFFEF4444) : AppTheme.textSecondary,
-              size: 24,
+              size: isLandscape ? 20 : 24,
             ),
             onPressed: _toggleFavorite,
           ),
 
+          const SizedBox(width: 10),
+
           // Icona Spotify (Apre il brano direttamente su Spotify)
           SpotifyIconButton(
             onTap: _openSpotify,
-            size: 36,
+            size: isLandscape ? 30 : 36,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildArtworkPlaceholder() {
+  Widget _buildArtworkPlaceholder({double size = 54}) {
     return Container(
-      width: 54,
-      height: 54,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(size > 40 ? 12 : 8),
         gradient: const LinearGradient(
           colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
           begin: Alignment.topLeft,
@@ -401,10 +467,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
         ),
         border: Border.all(color: AppTheme.accentAmber.withValues(alpha: 0.3)),
       ),
-      child: const Icon(
+      child: Icon(
         Icons.album_rounded,
         color: AppTheme.accentAmber,
-        size: 28,
+        size: size * 0.52,
       ),
     );
   }

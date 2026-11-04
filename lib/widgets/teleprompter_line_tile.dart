@@ -28,9 +28,14 @@ class TeleprompterLineTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeFontSize = 26.0 * fontScale;
-    final regularFontSize = 19.0 * fontScale;
-    final pastFontSize = 17.0 * fontScale;
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final baseActive = isLandscape ? 33.0 : 26.0;
+    final baseRegular = isLandscape ? 23.0 : 19.0;
+    final basePast = isLandscape ? 20.0 : 17.0;
+
+    final activeFontSize = baseActive * fontScale;
+    final regularFontSize = baseRegular * fontScale;
+    final pastFontSize = basePast * fontScale;
 
     return InkWell(
       onTap: onTap,
@@ -39,10 +44,13 @@ class TeleprompterLineTile extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 240),
         curve: Curves.easeOutCubic,
-        margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        margin: EdgeInsets.symmetric(
+          vertical: isLandscape ? 6 : 8,
+          horizontal: isLandscape ? 8 : 4,
+        ),
         padding: EdgeInsets.symmetric(
-          vertical: isActive ? 16 : 8,
-          horizontal: isActive ? 16 : 8,
+          vertical: isActive ? (isLandscape ? 14 : 16) : 8,
+          horizontal: isActive ? (isLandscape ? 20 : 16) : 8,
         ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
