@@ -25,6 +25,43 @@ class MusicRecognitionService {
 
   static const String _historyKey = 'lyricsync_history_v1';
 
+  /// Converte qualsiasi formato timecode (MM:SS, HH:MM:SS, secondi, millisecondi) in Duration
+  static Duration parseTimecode(dynamic raw) {
+    if (raw == null) return Duration.zero;
+
+    if (raw is num) {
+      if (raw > 10000) {
+        return Duration(milliseconds: raw.round());
+      } else {
+        return Duration(milliseconds: (raw * 1000).round());
+      }
+    }
+
+    if (raw is String) {
+      final s = raw.trim();
+      if (s.isEmpty) return Duration.zero;
+
+      final asNum = num.tryParse(s);
+      if (asNum != null) {
+        return parseTimecode(asNum);
+      }
+
+      final parts = s.split(':');
+      if (parts.length == 2) {
+        final m = int.tryParse(parts[0]) ?? 0;
+        final secPart = double.tryParse(parts[1]) ?? 0.0;
+        return Duration(milliseconds: (m * 60000 + secPart * 1000).round());
+      } else if (parts.length == 3) {
+        final h = int.tryParse(parts[0]) ?? 0;
+        final m = int.tryParse(parts[1]) ?? 0;
+        final secPart = double.tryParse(parts[2]) ?? 0.0;
+        return Duration(milliseconds: (h * 3600000 + m * 60000 + secPart * 1000).round());
+      }
+    }
+
+    return Duration.zero;
+  }
+
   /// Pulisce il titolo rimuovendo suffissi tipici (Remastered, Live, feat., ecc.)
   static String cleanTitle(String raw) {
     var s = raw;
@@ -44,6 +81,7 @@ class MusicRecognitionService {
   /// Riconoscimento reale tramite AudD API + Recupero Testi Multi-Provider (LRCLIB, Lyrics.ovh, AudD Lyrics, Offline)
   Future<SyncedSong> recognizeFromAudioSample({
     required String? sampleAudioPath,
+    DateTime? recordingStartedAt,
   }) async {
     if (sampleAudioPath == null) {
       throw const SongNotRecognizedException('Nessun campione audio registrato.');
@@ -60,6 +98,7 @@ class MusicRecognitionService {
     String? rawAlbum;
     String? auddLyrics;
     int durationSec = 180;
+    Duration detectedPlayOffset = Duration.zero;
 
     try {
       final formData = FormData.fromMap({
@@ -97,6 +136,20 @@ class MusicRecognitionService {
         rawArtist = resultObj['artist'] as String?;
         rawAlbum = resultObj['album'] as String?;
 
+        // Calcolo timecode / posizione esatta nel brano
+        final rawTimecode = resultObj['timecode'] ??
+            resultObj['play_offset_ms'] ??
+            resultObj['offset'];
+        if (rawTimecode != null) {
+          final sampleOffset = parseTimecode(rawTimecode);
+          final elapsedSinceRecordStart = recordingStartedAt != null
+              ? DateTime.now().difference(recordingStartedAt)
+              : const Duration(seconds: 5);
+
+          detectedPlayOffset = sampleOffset + elapsedSinceRecordStart;
+          debugPrint('Sincronia Live: timecode AudD=$rawTimecode ($sampleOffset) + latenza=$elapsedSinceRecordStart => offset finale=$detectedPlayOffset');
+        }
+
         // Durata da metadata se disponibile
         final appleMusic = resultObj['apple_music'] as Map<String, dynamic>?;
         final spotify = resultObj['spotify'] as Map<String, dynamic>?;
@@ -127,7 +180,7 @@ class MusicRecognitionService {
 
     final cleanedTitle = cleanTitle(rawTitle);
     final cleanedArtist = cleanArtist(rawArtist);
-    debugPrint('Canzone riconosciuta: "$rawTitle" ($cleanedTitle) di "$rawArtist" ($cleanedArtist)');
+    debugPrint('Canzone riconosciuta: "$rawTitle" ($cleanedTitle) di "$rawArtist" ($cleanedArtist) @ offset $detectedPlayOffset');
 
     // ── 2. Recupero Testi & Sincronia con Fallback Multi-Fonte ───────────────
     final totalDuration = Duration(seconds: durationSec);
@@ -152,7 +205,7 @@ class MusicRecognitionService {
       artist: rawArtist,
       album: rawAlbum ?? 'Riconoscimento Live',
       duration: totalDuration,
-      detectedPlayOffset: Duration.zero,
+      detectedPlayOffset: detectedPlayOffset,
       matchedAt: DateTime.now(),
       isLiveConcertVersion: true,
       rawLrc: lyricsData.rawLrc,

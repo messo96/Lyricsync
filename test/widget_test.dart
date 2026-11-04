@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lyricsync/data/concert_setlists.dart';
 import 'package:lyricsync/main.dart';
 import 'package:lyricsync/models/synced_song.dart';
+import 'package:lyricsync/services/music_recognition_service.dart';
 import 'package:lyricsync/services/realtime_lyrics_sync_controller.dart';
 
 void main() {
@@ -46,5 +47,19 @@ void main() {
     expect(controller.manualPhaseOffsetMs, 0);
 
     controller.dispose();
+  });
+
+  test('MusicRecognitionService.parseTimecode parses various timecode formats', () {
+    // MM:SS
+    expect(MusicRecognitionService.parseTimecode('01:24'), const Duration(minutes: 1, seconds: 24));
+    expect(MusicRecognitionService.parseTimecode('00:45.30'), const Duration(seconds: 45, milliseconds: 300));
+    // HH:MM:SS
+    expect(MusicRecognitionService.parseTimecode('01:02:03'), const Duration(hours: 1, minutes: 2, seconds: 3));
+    // Numbers
+    expect(MusicRecognitionService.parseTimecode(95), const Duration(seconds: 95));
+    expect(MusicRecognitionService.parseTimecode(95000), const Duration(milliseconds: 95000));
+    // Null / Empty
+    expect(MusicRecognitionService.parseTimecode(null), Duration.zero);
+    expect(MusicRecognitionService.parseTimecode(''), Duration.zero);
   });
 }

@@ -56,6 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     String? samplePath;
     try {
+      final recordingStartedAt = DateTime.now();
       samplePath = await _audioRecorder.startListening();
 
       // Registra per 5 secondi per ottenere un campione audio sufficiente per AudD
@@ -75,10 +76,10 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
 
-      // Riconoscimento REALE via AudD + LRCLIB.
-      // Lancia SongNotRecognizedException se nulla viene trovato.
+      // Riconoscimento REALE via AudD con calcolo esatto del timecode live
       final syncedSong = await _recognitionService.recognizeFromAudioSample(
         sampleAudioPath: samplePath,
+        recordingStartedAt: recordingStartedAt,
       );
 
       if (mounted) {

@@ -40,6 +40,18 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
       initialManualOffsetMs: widget.initialOffsetMs,
     );
     _controller.addListener(_onSyncUpdate);
+
+    // Salto istantaneo al punto esatto del brano appena la vista è renderizzata
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final activeIdx = _controller.activeLineIndex;
+      if (activeIdx > 0 && _scrollController.isAttached) {
+        _lastScrolledIndex = activeIdx;
+        _scrollController.jumpTo(
+          index: activeIdx,
+          alignment: 0.35,
+        );
+      }
+    });
   }
 
   void _onSyncUpdate() {
@@ -253,6 +265,8 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                 child: ScrollablePositionedList.builder(
                   itemScrollController: _scrollController,
                   itemPositionsListener: _positionsListener,
+                  initialScrollIndex: _controller.activeLineIndex >= 0 ? _controller.activeLineIndex : 0,
+                  initialAlignment: 0.35,
                   padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
                   itemCount: widget.song.lyrics.length,
                   itemBuilder: (context, index) {
