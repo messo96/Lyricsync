@@ -81,7 +81,7 @@ class MusicRecognitionService {
   /// Riconoscimento reale tramite AudD API + Recupero Testi Multi-Provider (LRCLIB, Lyrics.ovh, AudD Lyrics, Offline)
   Future<SyncedSong> recognizeFromAudioSample({
     required String? sampleAudioPath,
-    DateTime? recordingStartedAt,
+    DateTime? recordingEndedAt,
   }) async {
     if (sampleAudioPath == null) {
       throw const SongNotRecognizedException('Nessun campione audio registrato.');
@@ -136,18 +136,21 @@ class MusicRecognitionService {
         rawArtist = resultObj['artist'] as String?;
         rawAlbum = resultObj['album'] as String?;
 
-        // Calcolo timecode / posizione esatta nel brano
+        // Calcolo timecode calibrato: compensa solo la latenza di rete post-registrazione
         final rawTimecode = resultObj['timecode'] ??
             resultObj['play_offset_ms'] ??
             resultObj['offset'];
         if (rawTimecode != null) {
           final sampleOffset = parseTimecode(rawTimecode);
-          final elapsedSinceRecordStart = recordingStartedAt != null
-              ? DateTime.now().difference(recordingStartedAt)
-              : const Duration(seconds: 5);
+          final networkDelay = recordingEndedAt != null
+              ? DateTime.now().difference(recordingEndedAt)
+              : const Duration(milliseconds: 1200);
 
-          detectedPlayOffset = sampleOffset + elapsedSinceRecordStart;
-          debugPrint('Sincronia Live: timecode AudD=$rawTimecode ($sampleOffset) + latenza=$elapsedSinceRecordStart => offset finale=$detectedPlayOffset');
+          // Calibrazione: il timecode indica la posizione del campione;
+          // aggiungiamo il solo ritardo di rete per allineare al millisecondo
+          detectedPlayOffset = sampleOffset + networkDelay;
+          if (detectedPlayOffset < Duration.zero) detectedPlayOffset = Duration.zero;
+          debugPrint('Sincronia Live Calibrata: timecode=$rawTimecode ($sampleOffset) + networkDelay=$networkDelay => offset=$detectedPlayOffset');
         }
 
         // Durata da metadata se disponibile

@@ -11,7 +11,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(find.text('LyricSync'), findsOneWidget);
-    expect(find.text('Setlist & Inni da Stadio'), findsOneWidget);
+    expect(find.text('Tocca per ascoltare e sincronizzare il testo'), findsOneWidget);
   });
 
   test('SyncedSong.parseLrc parses timestamps and translations accurately', () {
