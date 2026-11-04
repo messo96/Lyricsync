@@ -45,6 +45,7 @@ class TeleprompterLineTile extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
+        width: double.infinity,
         margin: EdgeInsets.symmetric(
           vertical: isLandscape ? 8 : 10,
           horizontal: isLandscape ? 8 : 4,
@@ -54,14 +55,15 @@ class TeleprompterLineTile extends StatelessWidget {
           horizontal: 4,
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Testo del verso
+            // Testo del verso (centrato)
             if (isActive && line.words.isNotEmpty)
               _buildKaraokeWordFlow(context, activeFontSize)
             else
               Text(
                 line.text,
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: isActive
                       ? activeFontSize
@@ -85,25 +87,33 @@ class TeleprompterLineTile extends StatelessWidget {
                 ),
               ),
 
-            // Barra di avanzamento per il verso attivo (modalità concerto karaoke)
+            // Barra di avanzamento per il verso attivo (centrata ed elegante)
             if (isActive) ...[
               const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: activeLineProgress,
-                  minHeight: 3.5,
-                  backgroundColor: AppTheme.surfaceLight,
-                  valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.accentAmber),
+              Center(
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxWidth: isLandscape ? 420 : 280,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: activeLineProgress,
+                      minHeight: 3.5,
+                      backgroundColor: AppTheme.surfaceLight,
+                      valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.accentAmber),
+                    ),
+                  ),
                 ),
               ),
             ],
 
-            // Traduzione italiana opzionale per cantare capendo il significato
+            // Traduzione italiana opzionale per cantare capendo il significato (centrata)
             if (showTranslation && line.translation != null && line.translation!.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
                 line.translation!,
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: (isActive ? 15.0 : 13.0) * fontScale,
                   fontStyle: FontStyle.italic,
@@ -123,6 +133,8 @@ class TeleprompterLineTile extends StatelessWidget {
 
   Widget _buildKaraokeWordFlow(BuildContext context, double fontSize) {
     return Wrap(
+      alignment: WrapAlignment.center,
+      runAlignment: WrapAlignment.center,
       spacing: 6,
       runSpacing: 4,
       children: List.generate(line.words.length, (wIdx) {
