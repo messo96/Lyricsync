@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../models/listening_environment.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/music_recognition_service.dart';
 import '../theme/app_theme.dart';
@@ -23,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _statusText = 'Tocca per ascoltare e sincronizzare il testo';
   bool _isAutoPlayEnabled = false;
   bool _hasCustomApiKey = false;
+  ListeningEnvironment _selectedEnvironment = ListeningEnvironment.concerto;
 
   @override
   void initState() {
@@ -33,10 +35,22 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     final token = await _recognitionService.getSavedAudDToken();
+    final envId = prefs.getString('lyricsync_environment');
     if (mounted) {
       setState(() {
         _isAutoPlayEnabled = prefs.getBool('lyricsync_autoplay_enabled') ?? false;
         _hasCustomApiKey = token != null && token.isNotEmpty;
+        _selectedEnvironment = ListeningEnvironment.fromId(envId);
+      });
+    }
+  }
+
+  Future<void> _setEnvironment(ListeningEnvironment env) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lyricsync_environment', env.id);
+    if (mounted) {
+      setState(() {
+        _selectedEnvironment = env;
       });
     }
   }
@@ -63,15 +77,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() {
       _isListening = true;
-      _statusText = 'Ascolto del concerto in corso (44.1 kHz)...';
+      _statusText = 'Ascolto (${_selectedEnvironment.label}) in corso...';
     });
 
     String? samplePath;
     try {
       samplePath = await _audioRecorder.startListening();
 
-      // Registra per 5 secondi per isolare l'impronta musicale
-      await Future.delayed(const Duration(milliseconds: 5000));
+      // Durata dinamica calibrata in base all'ambiente selezionato
+      await Future.delayed(Duration(milliseconds: _selectedEnvironment.sampleDurationMs));
 
       if (mounted) {
         setState(() {
@@ -88,10 +102,11 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
 
-      // Riconoscimento REALE via AudD con sincronizzazione precisa del timecode
+      // Riconoscimento REALE via AudD con sincronizzazione calibrata sull'ambiente
       final syncedSong = await _recognitionService.recognizeFromAudioSample(
         sampleAudioPath: samplePath,
         recordingEndedAt: recordingEndedAt,
+        environment: _selectedEnvironment,
       );
 
       if (mounted) {
@@ -107,6 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
             builder: (_) => LyricsTeleprompterScreen(
               song: syncedSong,
               isAutoPlay: _isAutoPlayEnabled,
+              environment: _selectedEnvironment,
             ),
           ),
         ).then((_) => _loadPreferences());
@@ -138,6 +154,150 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
+  }
+
+  void _showEnvironmentModal() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF334155),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Row(
+                  children: [
+                    Icon(Icons.tune_rounded, color: AppTheme.accentMint, size: 22),
+                    SizedBox(width: 10),
+                    Text(
+                      'Ambiente di Ascolto',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.textPrimary,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Calibra tempo di registrazione, filtri acustici e latenza del microfono:',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ...ListeningEnvironment.values.map((env) {
+                  final isSelected = env == _selectedEnvironment;
+                  return InkWell(
+                    onTap: () {
+                      _setEnvironment(env);
+                      Navigator.pop(ctx);
+                    },
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? env.badgeColor.withValues(alpha: 0.12)
+                            : AppTheme.surfaceLight,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: isSelected
+                              ? env.badgeColor.withValues(alpha: 0.6)
+                              : AppTheme.border,
+                          width: isSelected ? 1.5 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: env.badgeColor.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(env.icon, color: env.badgeColor, size: 22),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      env.label,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: isSelected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        color: env.badgeColor.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        '${(env.sampleDurationMs / 1000).toStringAsFixed(1)}s',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                          color: env.badgeColor,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  env.description,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppTheme.textMuted,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (isSelected)
+                            Icon(Icons.check_circle_rounded, color: env.badgeColor, size: 20),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _showApiKeyDialog({String? alertMessage}) async {
@@ -345,20 +505,44 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppTheme.surfaceLight,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF1E293B)),
-              ),
-              child: const Text(
-                'LIVE CONCERT',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.accentCyan,
-                  letterSpacing: 0.5,
+            InkWell(
+              onTap: _showEnvironmentModal,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _selectedEnvironment.badgeColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _selectedEnvironment.badgeColor.withValues(alpha: 0.45),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _selectedEnvironment.icon,
+                      size: 12,
+                      color: _selectedEnvironment.badgeColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _selectedEnvironment.shortLabel,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: _selectedEnvironment.badgeColor,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 13,
+                      color: _selectedEnvironment.badgeColor,
+                    ),
+                  ],
                 ),
               ),
             ),

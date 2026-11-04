@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../models/listening_environment.dart';
 import '../models/synced_song.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/music_recognition_service.dart';
@@ -17,12 +18,14 @@ class LyricsTeleprompterScreen extends StatefulWidget {
   final SyncedSong song;
   final int initialOffsetMs;
   final bool isAutoPlay;
+  final ListeningEnvironment environment;
 
   const LyricsTeleprompterScreen({
     super.key,
     required this.song,
     this.initialOffsetMs = 0,
     this.isAutoPlay = false,
+    this.environment = ListeningEnvironment.concerto,
   });
 
   @override
@@ -100,12 +103,12 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
     setState(() {
       _isAutoDetectingNext = true;
-      _autoDetectStatus = 'Canzone finita! Ascolto del brano successivo in corso (44.1 kHz)...';
+      _autoDetectStatus = 'Canzone finita! Ascolto (${widget.environment.label}) in corso...';
     });
 
     try {
       final samplePath = await _audioRecorder.startListening();
-      await Future.delayed(const Duration(milliseconds: 5000));
+      await Future.delayed(Duration(milliseconds: widget.environment.sampleDurationMs));
       if (!mounted || !_isAutoDetectingNext) {
         await _audioRecorder.stopListening();
         return;
@@ -121,6 +124,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
       final nextSong = await _recognitionService.recognizeFromAudioSample(
         sampleAudioPath: samplePath,
         recordingEndedAt: recordingEndedAt,
+        environment: widget.environment,
       );
 
       if (mounted) {

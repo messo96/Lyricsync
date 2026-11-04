@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/concert_setlists.dart';
+import '../models/listening_environment.dart';
 import '../models/synced_song.dart';
 
 /// Eccezione lanciata quando il fingerprinting audio non trova nessuna corrispondenza
@@ -106,6 +107,7 @@ class MusicRecognitionService {
   Future<SyncedSong> recognizeFromAudioSample({
     required String? sampleAudioPath,
     DateTime? recordingEndedAt,
+    ListeningEnvironment? environment,
   }) async {
     if (sampleAudioPath == null) {
       throw const SongNotRecognizedException('Nessun campione audio registrato.');
@@ -190,11 +192,15 @@ class MusicRecognitionService {
               ? DateTime.now().difference(recordingEndedAt)
               : const Duration(milliseconds: 1200);
 
+          final envOffset = environment != null
+              ? Duration(milliseconds: environment.latencyOffsetMs)
+              : Duration.zero;
+
           // Calibrazione: il timecode indica la posizione del campione;
-          // aggiungiamo il solo ritardo di rete per allineare al millisecondo
-          detectedPlayOffset = sampleOffset + networkDelay;
+          // aggiungiamo il ritardo di rete e l'offset acustico ambientale selezionato
+          detectedPlayOffset = sampleOffset + networkDelay + envOffset;
           if (detectedPlayOffset < Duration.zero) detectedPlayOffset = Duration.zero;
-          debugPrint('Sincronia Live Calibrata: timecode=$rawTimecode ($sampleOffset) + networkDelay=$networkDelay => offset=$detectedPlayOffset');
+          debugPrint('Sincronia Calibrata: timecode=$rawTimecode ($sampleOffset) + netDelay=$networkDelay + envOffset=$envOffset => offset=$detectedPlayOffset');
         }
 
         // Durata e copertina da metadata Spotify / Apple Music

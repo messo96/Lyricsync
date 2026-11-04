@@ -1,26 +1,38 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static const Color background = Color(0xFF07090E);
-  static const Color surface = Color(0xFF111726);
-  static const Color surfaceLight = Color(0xFF1B2337);
-  static const Color accentAmber = Color(0xFFF59E0B);
-  static const Color accentCyan = Color(0xFF06B6D4);
-  static const Color accentPink = Color(0xFFEC4899);
+  // Sfondi calmi e vellutati (Midnight Obsidian)
+  static const Color background = Color(0xFF090C13);
+  static const Color surface = Color(0xFF111622);
+  static const Color surfaceLight = Color(0xFF182030);
+  static const Color border = Color(0xFF212B3E);
+
+  // Accenti iconici e calmi
+  static const Color accentMint = Color(0xFF2DD4BF);       // Nordic Jade / Mint calmo acustico
+  static const Color accentGold = Color(0xFFF6C974);       // Oro caldo e rassicurante
+  static const Color accentIndigo = Color(0xFF818CF8);     // Viola celeste distensivo
+  static const Color accentEmerald = Color(0xFF10B981);    // Verde smeraldo per conferme/successo
+
+  // Alias compatibilità per palette iconica
+  static const Color accentAmber = accentGold;
+  static const Color accentCyan = accentMint;
+  static const Color accentPink = Color(0xFFF472B6);
+
+  // Tipografia serena e distensiva
   static const Color textPrimary = Color(0xFFF8FAFC);
   static const Color textSecondary = Color(0xFF94A3B8);
-  static const Color textMuted = Color(0xFF475569);
-  static const Color activeLyricGlow = Color(0xFFFCD34D);
+  static const Color textMuted = Color(0xFF64748B);
+  static const Color activeLyricGlow = Color(0xFFFFFBEB);  // Bianco avorio luminoso e calmo per la vista
 
   static ThemeData get darkTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: background,
-      primaryColor: accentAmber,
+      primaryColor: accentMint,
       colorScheme: const ColorScheme.dark(
-        primary: accentAmber,
-        secondary: accentCyan,
+        primary: accentMint,
+        secondary: accentGold,
         surface: surface,
         onSurface: textPrimary,
       ),
@@ -41,26 +53,25 @@ class AppTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Color(0xFF1E293B), width: 1),
+          side: const BorderSide(color: border, width: 1),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: accentAmber,
-          foregroundColor: const Color(0xFF0F172A),
+          backgroundColor: accentMint,
+          foregroundColor: const Color(0xFF080B11),
           elevation: 0,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
           textStyle: const TextStyle(
-            fontSize: 15,
+            fontSize: 14,
             fontWeight: FontWeight.w700,
-            letterSpacing: 0.2,
+            letterSpacing: 0.1,
           ),
         ),
       ),
     );
   }
 }
-
