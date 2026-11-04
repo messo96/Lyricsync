@@ -497,69 +497,37 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               ),
             ),
 
-            // ── LIVELLO 4: Overlay AutoPlay Rilevamento Brano Successivo ──────────
+            // ── LIVELLO 4: Overlay AutoPlay Rilevamento Brano Successivo (Anti-Overflow) ──────────
             if (_isAutoDetectingNext)
               Positioned.fill(
                 child: Container(
                   color: Colors.black.withValues(alpha: 0.88),
                   child: Center(
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 28),
-                      padding: const EdgeInsets.all(22),
-                      decoration: BoxDecoration(
-                        color: AppTheme.surface,
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(
-                          color: AppTheme.accentCyan.withValues(alpha: 0.5),
-                          width: 1.5,
+                    child: SingleChildScrollView(
+                      physics: const ClampingScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxWidth: isLandscape ? 560 : 360,
                         ),
-                        boxShadow: const [
-                          BoxShadow(color: Colors.black87, blurRadius: 20, offset: Offset(0, 6)),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(6),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.accentCyan.withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(Icons.autorenew_rounded, color: AppTheme.accentCyan, size: 18),
-                              ),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'AutoPlay Concerto',
-                                style: TextStyle(
-                                  color: AppTheme.textPrimary,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ],
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isLandscape ? 20 : 18,
+                          vertical: isLandscape ? 14 : 18,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppTheme.surface,
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: AppTheme.accentCyan.withValues(alpha: 0.5),
+                            width: 1.5,
                           ),
-                          const SizedBox(height: 14),
-                          PulsingWaveform(
-                            isListening: true,
-                            acousticNotifier: _audioRecorder.acousticNotifier,
-                            amplitudeNotifier: _audioRecorder.amplitudeNotifier,
-                            statusText: _autoDetectStatus,
-                          ),
-                          const SizedBox(height: 14),
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.close_rounded, size: 16, color: AppTheme.textSecondary),
-                            label: const Text('Annulla AutoPlay', style: TextStyle(color: AppTheme.textSecondary)),
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Color(0xFF334155)),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                            onPressed: _cancelAutoDetect,
-                          ),
-                        ],
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black87, blurRadius: 20, offset: Offset(0, 6)),
+                          ],
+                        ),
+                        child: isLandscape
+                            ? _buildAutoPlayLandscapeContent()
+                            : _buildAutoPlayPortraitContent(),
                       ),
                     ),
                   ),
@@ -568,6 +536,130 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Layout orizzontale compatto per il popup AutoPlay: evita qualsiasi overflow in landscape
+  Widget _buildAutoPlayLandscapeContent() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        PulsingWaveform(
+          isListening: true,
+          size: 110,
+          acousticNotifier: _audioRecorder.acousticNotifier,
+          amplitudeNotifier: _audioRecorder.amplitudeNotifier,
+          statusText: '',
+          showStatusText: false,
+          showBadge: false,
+        ),
+        const SizedBox(width: 18),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentCyan.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.autorenew_rounded, color: AppTheme.accentCyan, size: 16),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'AutoPlay Concerto',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _autoDetectStatus,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTheme.accentCyan,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.close_rounded, size: 15, color: AppTheme.textSecondary),
+                label: const Text(
+                  'Annulla AutoPlay',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  side: const BorderSide(color: Color(0xFF334155)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: _cancelAutoDetect,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Layout verticale per il popup AutoPlay
+  Widget _buildAutoPlayPortraitContent() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppTheme.accentCyan.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.autorenew_rounded, color: AppTheme.accentCyan, size: 18),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              'AutoPlay Concerto',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        PulsingWaveform(
+          isListening: true,
+          size: 150,
+          acousticNotifier: _audioRecorder.acousticNotifier,
+          amplitudeNotifier: _audioRecorder.amplitudeNotifier,
+          statusText: _autoDetectStatus,
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.close_rounded, size: 16, color: AppTheme.textSecondary),
+          label: const Text('Annulla AutoPlay', style: TextStyle(color: AppTheme.textSecondary)),
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: Color(0xFF334155)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          onPressed: _cancelAutoDetect,
+        ),
+      ],
     );
   }
 
