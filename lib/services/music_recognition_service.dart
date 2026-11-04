@@ -182,7 +182,7 @@ class MusicRecognitionService {
         rawArtist = resultObj['artist'] as String?;
         rawAlbum = resultObj['album'] as String?;
 
-        // Calcolo timecode calibrato: compensa solo la latenza di rete post-registrazione
+        // Calcolo timecode calibrato: compensa latenza di rete, elaborazione e anticipa di 2s esatti
         final rawTimecode = resultObj['timecode'] ??
             resultObj['play_offset_ms'] ??
             resultObj['offset'];
@@ -196,11 +196,12 @@ class MusicRecognitionService {
               ? Duration(milliseconds: environment.latencyOffsetMs)
               : Duration.zero;
 
-          // Calibrazione: il timecode indica la posizione del campione;
-          // aggiungiamo il ritardo di rete e l'offset acustico ambientale selezionato
-          detectedPlayOffset = sampleOffset + networkDelay + envOffset;
+          // Compensazione calibrata: +2000ms (+2 secondi) per eliminare il ritardo del testo rispetto alla canzone
+          const syncAdvance = Duration(milliseconds: 2000);
+
+          detectedPlayOffset = sampleOffset + networkDelay + envOffset + syncAdvance;
           if (detectedPlayOffset < Duration.zero) detectedPlayOffset = Duration.zero;
-          debugPrint('Sincronia Calibrata: timecode=$rawTimecode ($sampleOffset) + netDelay=$networkDelay + envOffset=$envOffset => offset=$detectedPlayOffset');
+          debugPrint('Sincronia Calibrata: timecode=$rawTimecode ($sampleOffset) + netDelay=$networkDelay + envOffset=$envOffset + syncAdvance=$syncAdvance => offset=$detectedPlayOffset');
         }
 
         // Durata e copertina da metadata Spotify / Apple Music
