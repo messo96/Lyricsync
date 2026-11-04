@@ -1,6 +1,0 @@
-{
-  "name": "AuraSync — Rilevamento Musicale & Testi Live (Flutter Studio)",
-  "description": "Applicazione e studio di sviluppo Flutter per il riconoscimento musicale nell'ambiente esterno con sincronizzazione del testo (LRC) al millisecondo in tempo reale.",
-  "requestFramePermissions": ["microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
