@@ -613,6 +613,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: _isListening ? null : _startListening,
                   child: PulsingWaveform(
                     isListening: _isListening,
+                    acousticNotifier: _audioRecorder.acousticNotifier,
                     amplitudeNotifier: _audioRecorder.amplitudeNotifier,
                     statusText: _statusText,
                   ),

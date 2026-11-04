@@ -492,6 +492,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                           const SizedBox(height: 14),
                           PulsingWaveform(
                             isListening: true,
+                            acousticNotifier: _audioRecorder.acousticNotifier,
                             amplitudeNotifier: _audioRecorder.amplitudeNotifier,
                             statusText: _autoDetectStatus,
                           ),
