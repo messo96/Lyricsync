@@ -3,22 +3,26 @@ import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/synced_song.dart';
+import '../services/audio_recorder_service.dart';
 import '../services/music_recognition_service.dart';
 import '../services/realtime_lyrics_sync_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/concert_glow_banner.dart';
 import '../widgets/delay_adjuster_bar.dart';
+import '../widgets/pulsing_waveform.dart';
 import '../widgets/spotify_icon_button.dart';
 import '../widgets/teleprompter_line_tile.dart';
 
 class LyricsTeleprompterScreen extends StatefulWidget {
   final SyncedSong song;
   final int initialOffsetMs;
+  final bool isAutoPlay;
 
   const LyricsTeleprompterScreen({
     super.key,
     required this.song,
     this.initialOffsetMs = 0,
+    this.isAutoPlay = false,
   });
 
   @override
@@ -26,10 +30,12 @@ class LyricsTeleprompterScreen extends StatefulWidget {
 }
 
 class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
-  late final RealtimeLyricsSyncController _controller;
+  late SyncedSong _currentSong;
+  late RealtimeLyricsSyncController _controller;
   final ItemScrollController _scrollController = ItemScrollController();
   final ItemPositionsListener _positionsListener = ItemPositionsListener.create();
   final MusicRecognitionService _recognitionService = MusicRecognitionService();
+  final AudioRecorderService _audioRecorder = AudioRecorderService();
 
   int _lastScrolledIndex = -1;
   bool _showTranslation = true;
@@ -41,9 +47,14 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   // Stato visibilità HUD (menu superiore e barra sync inferiore)
   bool _showOverlay = true;
 
+  // AutoPlay: ascolto automatico del brano successivo
+  bool _isAutoDetectingNext = false;
+  String _autoDetectStatus = '';
+
   @override
   void initState() {
     super.initState();
+    _currentSong = widget.song;
 
     // ── ORIZZONTALE DI DEFAULT: Apri subito in landscape ──
     SystemChrome.setPreferredOrientations([
@@ -51,12 +62,17 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
       DeviceOrientation.landscapeRight,
     ]);
 
+    _initController(widget.initialOffsetMs);
+    _checkFavorite();
+  }
+
+  void _initController([int initialOffsetMs = 0]) {
     _controller = RealtimeLyricsSyncController(
-      song: widget.song,
-      initialManualOffsetMs: widget.initialOffsetMs,
+      song: _currentSong,
+      initialManualOffsetMs: initialOffsetMs,
+      onSongFinished: _onSongEnded,
     );
     _controller.addListener(_onSyncUpdate);
-    _checkFavorite();
 
     // Salto istantaneo al punto esatto del brano appena la vista è renderizzata
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -71,6 +87,89 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
     });
   }
 
+  void _onSongEnded() {
+    if (!mounted) return;
+    if (widget.isAutoPlay && !_isAutoDetectingNext) {
+      _listenAndSwitchToNextSong();
+    }
+  }
+
+  /// Cattura dal microfono e rileva il brano successivo senza tornare indietro
+  Future<void> _listenAndSwitchToNextSong() async {
+    if (_isAutoDetectingNext) return;
+
+    setState(() {
+      _isAutoDetectingNext = true;
+      _autoDetectStatus = 'Canzone finita! Ascolto del brano successivo in corso (44.1 kHz)...';
+    });
+
+    try {
+      final samplePath = await _audioRecorder.startListening();
+      await Future.delayed(const Duration(milliseconds: 5000));
+      if (!mounted || !_isAutoDetectingNext) {
+        await _audioRecorder.stopListening();
+        return;
+      }
+
+      setState(() {
+        _autoDetectStatus = 'Identificazione del nuovo brano...';
+      });
+
+      await _audioRecorder.stopListening();
+      final recordingEndedAt = DateTime.now();
+
+      final nextSong = await _recognitionService.recognizeFromAudioSample(
+        sampleAudioPath: samplePath,
+        recordingEndedAt: recordingEndedAt,
+      );
+
+      if (mounted) {
+        _controller.removeListener(_onSyncUpdate);
+        _controller.dispose();
+
+        setState(() {
+          _currentSong = nextSong;
+          _isAutoDetectingNext = false;
+          _lastScrolledIndex = -1;
+        });
+
+        _initController(0);
+        _checkFavorite();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '🎵 Brano successivo rilevato: "${nextSong.title}" di ${nextSong.artist}',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            backgroundColor: AppTheme.accentCyan,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Auto-detect error: $e');
+      if (mounted && _isAutoDetectingNext) {
+        setState(() {
+          _autoDetectStatus = 'In attesa del prossimo brano (nuovo tentativo tra 4s)...';
+        });
+        await Future.delayed(const Duration(seconds: 4));
+        if (mounted && _isAutoDetectingNext) {
+          _listenAndSwitchToNextSong();
+        }
+      }
+    }
+  }
+
+  void _cancelAutoDetect() {
+    _audioRecorder.stopListening();
+    if (mounted) {
+      setState(() {
+        _isAutoDetectingNext = false;
+      });
+    }
+  }
+
   void _toggleOverlay() {
     setState(() {
       _showOverlay = !_showOverlay;
@@ -78,7 +177,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   }
 
   Future<void> _checkFavorite() async {
-    final fav = await _recognitionService.isFavorite(widget.song.title, widget.song.artist);
+    final fav = await _recognitionService.isFavorite(_currentSong.title, _currentSong.artist);
     if (mounted) {
       setState(() {
         _isFavorite = fav;
@@ -87,7 +186,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   }
 
   Future<void> _toggleFavorite() async {
-    final nowFav = await _recognitionService.toggleFavorite(widget.song);
+    final nowFav = await _recognitionService.toggleFavorite(_currentSong);
     if (mounted) {
       setState(() {
         _isFavorite = nowFav;
@@ -95,7 +194,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            nowFav ? '❤️ "${widget.song.title}" salvata nei preferiti!' : 'Canzone rimossa dai preferiti',
+            nowFav ? '❤️ "${_currentSong.title}" salvata nei preferiti!' : 'Canzone rimossa dai preferiti',
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           duration: const Duration(seconds: 2),
@@ -108,9 +207,9 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   }
 
   Future<void> _openSpotify() async {
-    final target = widget.song.spotifyUrl != null && widget.song.spotifyUrl!.isNotEmpty
-        ? widget.song.spotifyUrl!
-        : 'https://open.spotify.com/search/${Uri.encodeComponent('${widget.song.artist} ${widget.song.title}')}';
+    final target = _currentSong.spotifyUrl != null && _currentSong.spotifyUrl!.isNotEmpty
+        ? _currentSong.spotifyUrl!
+        : 'https://open.spotify.com/search/${Uri.encodeComponent('${_currentSong.artist} ${_currentSong.title}')}';
     final uri = Uri.parse(target);
 
     try {
@@ -142,6 +241,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
   @override
   void dispose() {
+    _audioRecorder.dispose();
     _controller.removeListener(_onSyncUpdate);
     _controller.dispose();
     // Ripristina l'orientamento verticale standard quando si esce
@@ -219,9 +319,9 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                       top: isLandscape ? 72 : 140,
                       bottom: isLandscape ? 68 : 96,
                     ),
-                    itemCount: widget.song.lyrics.length,
+                    itemCount: _currentSong.lyrics.length,
                     itemBuilder: (context, index) {
-                      final line = widget.song.lyrics[index];
+                      final line = _currentSong.lyrics[index];
                       final isActive = index == _controller.activeLineIndex;
                       final isPast = index < _controller.activeLineIndex;
 
@@ -339,6 +439,74 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                 ),
               ),
             ),
+
+            // ── LIVELLO 4: Overlay AutoPlay Rilevamento Brano Successivo ──────────
+            if (_isAutoDetectingNext)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.88),
+                  child: Center(
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 28),
+                      padding: const EdgeInsets.all(22),
+                      decoration: BoxDecoration(
+                        color: AppTheme.surface,
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(
+                          color: AppTheme.accentCyan.withValues(alpha: 0.5),
+                          width: 1.5,
+                        ),
+                        boxShadow: const [
+                          BoxShadow(color: Colors.black87, blurRadius: 20, offset: Offset(0, 6)),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.accentCyan.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.autorenew_rounded, color: AppTheme.accentCyan, size: 18),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'AutoPlay Concerto',
+                                style: TextStyle(
+                                  color: AppTheme.textPrimary,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          PulsingWaveform(
+                            isListening: true,
+                            amplitudeNotifier: _audioRecorder.amplitudeNotifier,
+                            statusText: _autoDetectStatus,
+                          ),
+                          const SizedBox(height: 14),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.close_rounded, size: 16, color: AppTheme.textSecondary),
+                            label: const Text('Annulla AutoPlay', style: TextStyle(color: AppTheme.textSecondary)),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF334155)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            onPressed: _cancelAutoDetect,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -376,9 +544,9 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
           // Artwork brano
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: widget.song.coverArtUrl != null && widget.song.coverArtUrl!.isNotEmpty
+            child: _currentSong.coverArtUrl != null && _currentSong.coverArtUrl!.isNotEmpty
                 ? Image.network(
-                    widget.song.coverArtUrl!,
+                    _currentSong.coverArtUrl!,
                     width: 36,
                     height: 36,
                     fit: BoxFit.cover,
@@ -395,7 +563,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  widget.song.title,
+                  _currentSong.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -410,7 +578,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                   children: [
                     Flexible(
                       child: Text(
-                        widget.song.artist,
+                        _currentSong.artist,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -424,7 +592,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                     const Icon(Icons.timer_outlined, size: 11, color: AppTheme.accentAmber),
                     const SizedBox(width: 3),
                     Text(
-                      '${_formatDuration(_controller.currentPosition)} / ${_formatDuration(widget.song.duration)}',
+                      '${_formatDuration(_controller.currentPosition)} / ${_formatDuration(_currentSong.duration)}',
                       style: const TextStyle(
                         fontSize: 10,
                         fontFamily: 'monospace',
@@ -437,12 +605,12 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
 
           // Traduzione ON/OFF
           IconButton(
             tooltip: _showTranslation ? 'Nascondi traduzione' : 'Mostra traduzione',
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 5),
             constraints: const BoxConstraints(),
             icon: Icon(
               Icons.translate_rounded,
@@ -455,7 +623,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
           // Dimensione testo
           IconButton(
             tooltip: 'Dimensione testo',
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 5),
             constraints: const BoxConstraints(),
             icon: Icon(
               _fontScale > 1.0 ? Icons.text_increase_rounded : Icons.format_size_rounded,
@@ -478,7 +646,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
           // Rotazione Verticale / Orizzontale
           IconButton(
             tooltip: 'Torna in verticale',
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 5),
             constraints: const BoxConstraints(),
             icon: const Icon(
               Icons.screen_lock_portrait_rounded,
@@ -488,23 +656,23 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
             onPressed: _toggleOrientation,
           ),
 
-          // Concert Glowstick Mode
+          // Tasto Rileva Brano Successivo (Auto-Riconoscimento o Salto)
           IconButton(
-            tooltip: 'Concert Glowstick Mode',
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            tooltip: 'Rileva brano successivo dal microfono',
+            padding: const EdgeInsets.symmetric(horizontal: 5),
             constraints: const BoxConstraints(),
-            icon: Icon(
-              Icons.flare_rounded,
-              color: _isGlowEnabled ? AppTheme.accentAmber : AppTheme.textMuted,
-              size: 20,
+            icon: const Icon(
+              Icons.skip_next_rounded,
+              color: AppTheme.accentCyan,
+              size: 26,
             ),
-            onPressed: () => setState(() => _isGlowEnabled = !_isGlowEnabled),
+            onPressed: _listenAndSwitchToNextSong,
           ),
 
           // Play / Pausa
           IconButton(
             tooltip: _controller.isPlaying ? 'Pausa' : 'Riprendi',
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 5),
             constraints: const BoxConstraints(),
             icon: Icon(
               _controller.isPlaying ? Icons.pause_circle_rounded : Icons.play_circle_rounded,
@@ -519,7 +687,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
           // Cuore (Salva nei Preferiti)
           IconButton(
             tooltip: _isFavorite ? 'Rimuovi dai preferiti' : 'Salva nei preferiti',
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 5),
             constraints: const BoxConstraints(),
             icon: Icon(
               _isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
@@ -529,7 +697,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
             onPressed: _toggleFavorite,
           ),
 
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
 
           // Pulsante Spotify (con logo 3D ufficiale caricato dall'utente)
           SpotifyIconButton(
@@ -591,6 +759,15 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               },
             ),
             IconButton(
+              tooltip: 'Rileva brano successivo',
+              icon: const Icon(
+                Icons.skip_next_rounded,
+                color: AppTheme.accentCyan,
+                size: 24,
+              ),
+              onPressed: _listenAndSwitchToNextSong,
+            ),
+            IconButton(
               tooltip: 'Gira lo schermo in orizzontale',
               icon: const Icon(
                 Icons.screen_rotation_rounded,
@@ -645,9 +822,9 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
           // Copertina del brano (o placeholder musicale)
           ClipRRect(
             borderRadius: BorderRadius.circular(isLandscape ? 8 : 12),
-            child: widget.song.coverArtUrl != null && widget.song.coverArtUrl!.isNotEmpty
+            child: _currentSong.coverArtUrl != null && _currentSong.coverArtUrl!.isNotEmpty
                 ? Image.network(
-                    widget.song.coverArtUrl!,
+                    _currentSong.coverArtUrl!,
                     width: artworkSize,
                     height: artworkSize,
                     fit: BoxFit.cover,
@@ -665,7 +842,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  widget.song.title,
+                  _currentSong.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -680,7 +857,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        widget.song.artist,
+                        _currentSong.artist,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -694,7 +871,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                     const Icon(Icons.timer_outlined, size: 11, color: AppTheme.accentAmber),
                     const SizedBox(width: 3),
                     Text(
-                      '${_formatDuration(_controller.currentPosition)} / ${_formatDuration(widget.song.duration)}',
+                      '${_formatDuration(_controller.currentPosition)} / ${_formatDuration(_currentSong.duration)}',
                       style: TextStyle(
                         fontSize: isLandscape ? 10 : 11,
                         fontFamily: 'monospace',

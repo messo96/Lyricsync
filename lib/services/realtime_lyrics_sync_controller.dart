@@ -5,9 +5,11 @@ import '../models/synced_song.dart';
 class RealtimeLyricsSyncController extends ChangeNotifier {
   final SyncedSong song;
   final Stopwatch _stopwatch = Stopwatch();
+  final VoidCallback? onSongFinished;
   Timer? _tickerTimer;
 
   bool _isPlaying = true;
+  bool _finishedNotified = false;
   int _manualPhaseOffsetMs = 0;
   Duration _currentPosition = Duration.zero;
   int _activeLineIndex = -1;
@@ -25,6 +27,7 @@ class RealtimeLyricsSyncController extends ChangeNotifier {
   RealtimeLyricsSyncController({
     required this.song,
     int initialManualOffsetMs = 0,
+    this.onSongFinished,
   }) {
     _manualPhaseOffsetMs = initialManualOffsetMs;
     _stopwatch.start();
@@ -44,6 +47,15 @@ class RealtimeLyricsSyncController extends ChangeNotifier {
   void _computeCurrentState() {
     final elapsedMs = _stopwatch.elapsedMilliseconds;
     final totalMs = song.detectedPlayOffset.inMilliseconds + elapsedMs + _manualPhaseOffsetMs;
+
+    // Notifica di fine brano (quando supera la durata del brano o l'ultimo verso + 3s)
+    final isSongEnd = (song.duration.inMilliseconds > 0 && totalMs >= song.duration.inMilliseconds) ||
+                      (song.lyrics.isNotEmpty && totalMs >= song.lyrics.last.endTimestamp.inMilliseconds + 3000);
+
+    if (isSongEnd && !_finishedNotified) {
+      _finishedNotified = true;
+      onSongFinished?.call();
+    }
 
     // Loop al termine per permettere sessioni di canto continue
     final clampedMs = song.duration.inMilliseconds > 0

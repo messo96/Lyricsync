@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/music_recognition_service.dart';
@@ -20,6 +21,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _isListening = false;
   String _statusText = 'Tocca per ascoltare e sincronizzare il testo';
+  bool _isAutoPlayEnabled = false;
+  bool _hasCustomApiKey = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPreferences();
+  }
+
+  Future<void> _loadPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = await _recognitionService.getSavedAudDToken();
+    if (mounted) {
+      setState(() {
+        _isAutoPlayEnabled = prefs.getBool('lyricsync_autoplay_enabled') ?? false;
+        _hasCustomApiKey = token != null && token.isNotEmpty;
+      });
+    }
+  }
+
+  Future<void> _toggleAutoPlay(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('lyricsync_autoplay_enabled', value);
+    if (mounted) {
+      setState(() {
+        _isAutoPlayEnabled = value;
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -76,9 +106,10 @@ class _HomeScreenState extends State<HomeScreen> {
           MaterialPageRoute(
             builder: (_) => LyricsTeleprompterScreen(
               song: syncedSong,
+              isAutoPlay: _isAutoPlayEnabled,
             ),
           ),
-        );
+        ).then((_) => _loadPreferences());
       }
     } on AudDRateLimitException catch (e) {
       if (mounted) {
@@ -207,6 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton(
             onPressed: () async {
               await _recognitionService.saveAudDToken(controller.text.trim());
+              await _loadPreferences();
               if (ctx.mounted) Navigator.pop(ctx);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -333,10 +365,39 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'Configura Chiave API AudD',
-            icon: const Icon(Icons.vpn_key_rounded, color: AppTheme.accentAmber, size: 20),
-            onPressed: () => _showApiKeyDialog(),
+          // Icona Chiave API con spunta verde se configurata
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(
+                tooltip: _hasCustomApiKey
+                    ? 'API Token AudD Configurato (Attivo)'
+                    : 'Configura Chiave API AudD',
+                icon: Icon(
+                  Icons.vpn_key_rounded,
+                  color: _hasCustomApiKey ? const Color(0xFF10B981) : AppTheme.accentAmber,
+                  size: 21,
+                ),
+                onPressed: () => _showApiKeyDialog(),
+              ),
+              if (_hasCustomApiKey)
+                Positioned(
+                  right: 6,
+                  top: 9,
+                  child: Container(
+                    padding: const EdgeInsets.all(1.5),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF10B981),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      size: 9,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+            ],
           ),
           IconButton(
             tooltip: 'Cerca canzone o testo',
@@ -386,7 +447,101 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              const Spacer(flex: 3),
+              const Spacer(flex: 2),
+
+              // Switch AutoPlay Concerto
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: _isAutoPlayEnabled
+                        ? AppTheme.accentCyan.withValues(alpha: 0.5)
+                        : const Color(0xFF1E293B),
+                    width: 1.2,
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black38,
+                      blurRadius: 8,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: _isAutoPlayEnabled
+                            ? AppTheme.accentCyan.withValues(alpha: 0.15)
+                            : AppTheme.surfaceLight,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        Icons.autorenew_rounded,
+                        color: _isAutoPlayEnabled ? AppTheme.accentCyan : AppTheme.textMuted,
+                        size: 22,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'AutoPlay Concerto',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.textPrimary,
+                                ),
+                              ),
+                              if (_isAutoPlayEnabled) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.accentCyan.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Text(
+                                    'ATTIVO',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppTheme.accentCyan,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'Rileva in automatico la canzone successiva al termine',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch.adaptive(
+                      value: _isAutoPlayEnabled,
+                      activeColor: AppTheme.accentCyan,
+                      onChanged: _toggleAutoPlay,
+                    ),
+                  ],
+                ),
+              ),
+
+              const Spacer(flex: 1),
             ],
           ),
         ),
