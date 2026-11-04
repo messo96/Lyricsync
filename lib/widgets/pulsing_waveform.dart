@@ -145,3 +145,4 @@ class _PulsingWaveformState extends State<PulsingWaveform>
     );
   }
 }
+

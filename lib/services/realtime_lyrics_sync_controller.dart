@@ -135,3 +135,4 @@ class RealtimeLyricsSyncController extends ChangeNotifier {
     super.dispose();
   }
 }
+

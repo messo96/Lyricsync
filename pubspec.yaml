@@ -36,7 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   dio: ^5.11.1
   record: ^6.2.1
-  permission_handler: ^13.0.2
+  permission_handler: 11.3.1
   scrollable_positioned_list: ^0.3.8
   path_provider: ^2.1.5
   crypto: ^3.0.8
