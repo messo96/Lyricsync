@@ -14,6 +14,14 @@ class SongNotRecognizedException implements Exception {
   String toString() => message;
 }
 
+/// Eccezione lanciata quando il limite di richieste AudD è stato raggiunto
+class AudDRateLimitException implements Exception {
+  final String message;
+  const AudDRateLimitException([this.message = 'Limite richieste AudD raggiunto']);
+  @override
+  String toString() => message;
+}
+
 class MusicRecognitionService {
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 8),
@@ -24,6 +32,22 @@ class MusicRecognitionService {
   ));
 
   static const String _historyKey = 'lyricsync_history_v1';
+  static const String _prefKeyAudDToken = 'lyricsync_audd_api_token';
+
+  Future<String?> getSavedAudDToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(_prefKeyAudDToken);
+    return (token != null && token.trim().isNotEmpty) ? token.trim() : null;
+  }
+
+  Future<void> saveAudDToken(String? token) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (token == null || token.trim().isEmpty) {
+      await prefs.remove(_prefKeyAudDToken);
+    } else {
+      await prefs.setString(_prefKeyAudDToken, token.trim());
+    }
+  }
 
   /// Converte qualsiasi formato timecode (MM:SS, HH:MM:SS, secondi, millisecondi) in Duration
   static Duration parseTimecode(dynamic raw) {
@@ -102,8 +126,12 @@ class MusicRecognitionService {
     int durationSec = 180;
     Duration detectedPlayOffset = Duration.zero;
 
+    final savedToken = await getSavedAudDToken();
+    final apiToken = savedToken ?? 'test';
+
     try {
       final formData = FormData.fromMap({
+        'api_token': apiToken,
         'return': 'lyrics,apple_music,spotify',
         'file': await MultipartFile.fromFile(
           sampleAudioPath,
@@ -125,12 +153,26 @@ class MusicRecognitionService {
       debugPrint('AudD response: ${audDResponse.data}');
 
       Map<String, dynamic>? resultObj;
+      Map<String, dynamic>? errorObj;
       final responseData = audDResponse.data;
       if (responseData is String) {
         final decoded = jsonDecode(responseData) as Map<String, dynamic>;
         resultObj = decoded['result'] as Map<String, dynamic>?;
+        errorObj = decoded['error'] as Map<String, dynamic>?;
       } else if (responseData is Map<String, dynamic>) {
         resultObj = responseData['result'] as Map<String, dynamic>?;
+        errorObj = responseData['error'] as Map<String, dynamic>?;
+      }
+
+      if (errorObj != null) {
+        final errorCode = errorObj['error_code'];
+        final errorMsg = errorObj['error_message']?.toString() ?? '';
+        debugPrint('AudD API returned error: $errorCode - $errorMsg');
+        if (errorCode == 901 || errorCode == 900) {
+          throw const AudDRateLimitException(
+            'Limite di richieste gratuite AudD raggiunto.\n\nPer continuare, inserisci un API Token gratuito di AudD (300 richieste gratis su dashboard.audd.io).',
+          );
+        }
       }
 
       if (resultObj != null) {
@@ -191,6 +233,8 @@ class MusicRecognitionService {
           auddLyrics = lyricsObj['lyrics'] as String;
         }
       }
+    } on AudDRateLimitException {
+      rethrow;
     } catch (e) {
       debugPrint('AudD API error: $e');
       throw const SongNotRecognizedException(
