@@ -7,6 +7,7 @@ import '../models/synced_song.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/music_recognition_service.dart';
 import '../services/realtime_lyrics_sync_controller.dart';
+import '../services/system_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/concert_glow_banner.dart';
 import '../widgets/delay_adjuster_bar.dart';
@@ -59,6 +60,12 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
     super.initState();
     _currentSong = widget.song;
 
+    // Mantieni lo schermo sempre attivo durante la visualizzazione dei testi
+    SystemService.keepScreenOn(true);
+    // Configura Picture-in-Picture automatico al cambio applicazione
+    SystemService.setAutoPip(true);
+    SystemService.isPipModeNotifier.addListener(_onPipModeChanged);
+
     // ── ORIZZONTALE DI DEFAULT: Apri subito in landscape ──
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
@@ -67,6 +74,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
     _initController(widget.initialOffsetMs);
     _checkFavorite();
+  }
+
+  void _onPipModeChanged() {
+    if (mounted) setState(() {});
   }
 
   void _initController([int initialOffsetMs = 0]) {
@@ -245,6 +256,9 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
   @override
   void dispose() {
+    SystemService.isPipModeNotifier.removeListener(_onPipModeChanged);
+    SystemService.keepScreenOn(false);
+    SystemService.setAutoPip(false);
     _audioRecorder.dispose();
     _controller.removeListener(_onSyncUpdate);
     _controller.dispose();
@@ -279,6 +293,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (SystemService.isPipMode) {
+      return _buildPipView();
+    }
+
     final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
 
     return PopScope(
@@ -518,6 +536,140 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
     );
   }
 
+  /// Vista ultra-compatta e ad alto contrasto per Picture-in-Picture (finestra fluttuante sopra altre app)
+  Widget _buildPipView() {
+    final activeIndex = _controller.activeLineIndex;
+    final currentLine = (activeIndex >= 0 && activeIndex < _currentSong.lyrics.length)
+        ? _currentSong.lyrics[activeIndex]
+        : null;
+    final nextLine = (activeIndex + 1 >= 0 && activeIndex + 1 < _currentSong.lyrics.length)
+        ? _currentSong.lyrics[activeIndex + 1]
+        : null;
+
+    final progress = _currentSong.duration.inMilliseconds > 0
+        ? (_controller.currentPosition.inMilliseconds / _currentSong.duration.inMilliseconds).clamp(0.0, 1.0)
+        : 0.0;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF070A0F),
+            border: Border.all(
+              color: AppTheme.accentCyan.withValues(alpha: 0.35),
+              width: 1.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              // Mini barra di avanzamento del brano
+              LinearProgressIndicator(
+                value: progress,
+                minHeight: 2.5,
+                backgroundColor: const Color(0xFF1E293B),
+                valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.accentCyan),
+              ),
+
+              // Contenuto compatto PiP
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Header PiP con artista, titolo e minutaggio
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.music_note_rounded, size: 11, color: AppTheme.accentCyan),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              '${_currentSong.artist} • ${_currentSong.title}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _formatDuration(_controller.currentPosition),
+                            style: const TextStyle(
+                              fontSize: 9,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.accentAmber,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+
+                      // Verso attivo in grande evidenza con Nordic Mint
+                      Text(
+                        currentLine?.text.isNotEmpty == true ? currentLine!.text : '♪ ${_currentSong.title} ♪',
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                          color: AppTheme.accentCyan,
+                          height: 1.25,
+                          shadows: [
+                            Shadow(color: Colors.black, blurRadius: 4),
+                          ],
+                        ),
+                      ),
+
+                      // Traduzione se presente e attiva
+                      if (currentLine?.translation != null && _showTranslation) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          currentLine!.translation!,
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.accentAmber,
+                          ),
+                        ),
+                      ],
+
+                      // Verso successivo in anteprima morbida
+                      if (nextLine != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          nextLine.text,
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white.withValues(alpha: 0.45),
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Header orizzontale unificato: una singola riga ultra-compatta con tutti i controlli
   Widget _buildLandscapeUnifiedHeader() {
     return Container(
@@ -648,6 +800,19 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
             },
           ),
 
+          // Finestra Fluttuante (PiP sopra altre app)
+          IconButton(
+            tooltip: 'Finestra fluttuante (PiP)',
+            padding: const EdgeInsets.symmetric(horizontal: 5),
+            constraints: const BoxConstraints(),
+            icon: const Icon(
+              Icons.picture_in_picture_alt_rounded,
+              color: AppTheme.accentCyan,
+              size: 20,
+            ),
+            onPressed: () => SystemService.enterPip(),
+          ),
+
           // Rotazione Verticale / Orizzontale
           IconButton(
             tooltip: 'Torna in verticale',
@@ -771,6 +936,15 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                 size: 24,
               ),
               onPressed: _listenAndSwitchToNextSong,
+            ),
+            IconButton(
+              tooltip: 'Finestra fluttuante (PiP)',
+              icon: const Icon(
+                Icons.picture_in_picture_alt_rounded,
+                color: AppTheme.accentCyan,
+                size: 22,
+              ),
+              onPressed: () => SystemService.enterPip(),
             ),
             IconButton(
               tooltip: 'Gira lo schermo in orizzontale',

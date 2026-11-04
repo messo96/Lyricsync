@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/home_screen.dart';
+import 'services/system_service.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Inizializza listener per Picture-in-Picture e gestione schermo
+  SystemService.initialize();
 
   // Imposta barra di sistema scura per preservare l'esperienza immersiva a concerto
   SystemChrome.setSystemUIOverlayStyle(
