@@ -1,7 +1,10 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/listening_environment.dart';
+import '../models/synced_song.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/music_recognition_service.dart';
 import '../theme/app_theme.dart';
@@ -25,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isAutoPlayEnabled = false;
   bool _hasCustomApiKey = false;
   ListeningEnvironment _selectedEnvironment = ListeningEnvironment.concerto;
+  Timer? _countdownTimer;
 
   @override
   void initState() {
@@ -67,92 +71,166 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _countdownTimer?.cancel();
     _audioRecorder.dispose();
     super.dispose();
   }
 
-  /// Avvia la cattura audio da microfono e il riconoscimento acustico del brano
+  void _safeDeleteFile(String path) {
+    try {
+      final f = File(path);
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
+  }
+
+  /// Interrompe manualmente l'ascolto continuo su richiesta dell'utente
+  void _cancelListening() {
+    _countdownTimer?.cancel();
+    _audioRecorder.stopListening();
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+        _statusText = 'Tocca per ascoltare e sincronizzare il testo';
+      });
+    }
+  }
+
+  /// Avvia la cattura audio continua da microfono finché non trova un brano (timeout max 30s)
   Future<void> _startListening() async {
     if (_isListening) return;
 
-    setState(() {
-      _isListening = true;
-      _statusText = 'Ascolto (${_selectedEnvironment.label}) in corso...';
-    });
-
-    String? samplePath;
-    try {
-      samplePath = await _audioRecorder.startListening();
-
-      // Durata dinamica calibrata in base all'ambiente selezionato
-      await Future.delayed(Duration(milliseconds: _selectedEnvironment.sampleDurationMs));
-
+    final hasPerm = await _audioRecorder.checkAndRequestPermission();
+    if (!hasPerm) {
       if (mounted) {
-        setState(() {
-          _statusText = 'Identificazione brano in corso...';
-        });
-      }
-
-      await _audioRecorder.stopListening();
-      final recordingEndedAt = DateTime.now();
-
-      if (mounted) {
-        setState(() {
-          _statusText = 'Cercando testi sincronizzati...';
-        });
-      }
-
-      // Riconoscimento REALE via AudD con sincronizzazione calibrata sull'ambiente
-      final syncedSong = await _recognitionService.recognizeFromAudioSample(
-        sampleAudioPath: samplePath,
-        recordingEndedAt: recordingEndedAt,
-        environment: _selectedEnvironment,
-      );
-
-      if (mounted) {
-        setState(() {
-          _isListening = false;
-          _statusText = 'Tocca per ascoltare e sincronizzare il testo';
-        });
-
-        // Apri il teleprompter sincronizzato
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => LyricsTeleprompterScreen(
-              song: syncedSong,
-              isAutoPlay: _isAutoPlayEnabled,
-              environment: _selectedEnvironment,
-            ),
-          ),
-        ).then((_) => _loadPreferences());
-      }
-    } on AudDRateLimitException catch (e) {
-      if (mounted) {
-        setState(() {
-          _isListening = false;
-          _statusText = 'Tocca per ascoltare e sincronizzare il testo';
-        });
-        _showApiKeyDialog(alertMessage: e.message);
-      }
-    } on SongNotRecognizedException catch (e) {
-      if (mounted) {
-        setState(() {
-          _isListening = false;
-          _statusText = 'Tocca per ascoltare e sincronizzare il testo';
-        });
-        _showNotDetectedDialog(e.message);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isListening = false;
-          _statusText = 'Tocca per ascoltare e sincronizzare il testo';
-        });
         _showNotDetectedDialog(
-          'Errore durante il rilevamento. Verifica la connessione internet e riprova.',
+          'Permesso microfono non concesso. Concedi il permesso nelle impostazioni per usare LyricSync.',
         );
       }
+      return;
+    }
+
+    setState(() {
+      _isListening = true;
+      _statusText = 'Ascolto continuo (30s)... In attesa della musica';
+    });
+
+    final deadline = DateTime.now().add(const Duration(seconds: 30));
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || !_isListening) {
+        timer.cancel();
+        return;
+      }
+      final remaining = deadline.difference(DateTime.now()).inSeconds;
+      if (remaining <= 0) {
+        timer.cancel();
+      } else {
+        setState(() {
+          _statusText = 'Ascolto (${remaining}s)... Rilevamento in corso';
+        });
+      }
+    });
+
+    int attempt = 0;
+    SyncedSong? recognizedSong;
+    String? lastErrorMsg;
+
+    while (mounted && _isListening && DateTime.now().isBefore(deadline)) {
+      attempt++;
+      final remainingMs = deadline.difference(DateTime.now()).inMilliseconds;
+      if (remainingMs < 3000) {
+        // Meno di 3 secondi rimanenti, tempo insufficiente per un fingerprint valido
+        break;
+      }
+
+      final chunkDurationMs = _selectedEnvironment.sampleDurationMs.clamp(3500, remainingMs);
+
+      String? samplePath;
+      DateTime? recordingEndedAt;
+
+      try {
+        samplePath = await _audioRecorder.startListening();
+        await Future.delayed(Duration(milliseconds: chunkDurationMs));
+
+        if (!mounted || !_isListening) {
+          await _audioRecorder.stopListening();
+          if (samplePath != null) _safeDeleteFile(samplePath);
+          break;
+        }
+
+        recordingEndedAt = DateTime.now();
+        await _audioRecorder.stopListening();
+
+        if (samplePath == null) continue;
+
+        try {
+          final song = await _recognitionService.recognizeFromAudioSample(
+            sampleAudioPath: samplePath,
+            recordingEndedAt: recordingEndedAt,
+            environment: _selectedEnvironment,
+          );
+          recognizedSong = song;
+          _safeDeleteFile(samplePath);
+          break; // BRANO TROVATO! Esci subito dal ciclo e apri il testo
+        } on SongNotRecognizedException catch (e) {
+          lastErrorMsg = e.message;
+          _safeDeleteFile(samplePath);
+          debugPrint('Tentativo $attempt non riuscito: ${e.message}. Continuo ascolto...');
+          // Continua con il prossimo ciclo di ascolto finché non scadono i 30s
+        }
+      } on AudDRateLimitException catch (e) {
+        _countdownTimer?.cancel();
+        await _audioRecorder.stopListening();
+        if (samplePath != null) _safeDeleteFile(samplePath);
+        if (mounted) {
+          setState(() {
+            _isListening = false;
+            _statusText = 'Tocca per ascoltare e sincronizzare il testo';
+          });
+          _showApiKeyDialog(alertMessage: e.message);
+        }
+        return;
+      } catch (e) {
+        debugPrint('Errore durante campionamento tentativo $attempt: $e');
+        await _audioRecorder.stopListening();
+        if (samplePath != null) _safeDeleteFile(samplePath);
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+    }
+
+    _countdownTimer?.cancel();
+    await _audioRecorder.stopListening();
+
+    if (!mounted) return;
+
+    if (recognizedSong != null) {
+      setState(() {
+        _isListening = false;
+        _statusText = 'Tocca per ascoltare e sincronizzare il testo';
+      });
+
+      // Apri il teleprompter sincronizzato
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => LyricsTeleprompterScreen(
+            song: recognizedSong!,
+            isAutoPlay: _isAutoPlayEnabled,
+            environment: _selectedEnvironment,
+          ),
+        ),
+      ).then((_) => _loadPreferences());
+    } else if (_isListening) {
+      // Scaduti i 30 secondi senza aver individuato il brano
+      setState(() {
+        _isListening = false;
+        _statusText = 'Tocca per ascoltare e sincronizzare il testo';
+      });
+
+      _showNotDetectedDialog(
+        lastErrorMsg ??
+            'Nessun brano riconosciuto dopo 30 secondi di ascolto continuo.\nAvvicina il telefono alla sorgente audio e riprova.',
+      );
     }
   }
 
@@ -610,7 +688,7 @@ class _HomeScreenState extends State<HomeScreen> {
               // Hero radar per cattura microfono (unico elemento centrale)
               Center(
                 child: GestureDetector(
-                  onTap: _isListening ? null : _startListening,
+                  onTap: _isListening ? _cancelListening : _startListening,
                   child: PulsingWaveform(
                     isListening: _isListening,
                     acousticNotifier: _audioRecorder.acousticNotifier,
@@ -621,13 +699,16 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
 
               const SizedBox(height: 16),
-              const Center(
+              Center(
                 child: Text(
-                  'Tocca il pulsante per ascoltare e sincronizzare il testo',
+                  _isListening
+                      ? 'Ascolto continuo attivo (max 30s) · Tocca per fermare'
+                      : 'Tocca il pulsante per ascoltare e sincronizzare il testo',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 13,
-                    color: AppTheme.textMuted,
+                    color: _isListening ? AppTheme.accentCyan : AppTheme.textMuted,
+                    fontWeight: _isListening ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
               ),

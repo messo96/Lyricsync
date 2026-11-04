@@ -108,71 +108,106 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
     }
   }
 
-  /// Cattura dal microfono e rileva il brano successivo senza tornare indietro
+  /// Cattura dal microfono e rileva il brano successivo senza tornare indietro (max 30s)
   Future<void> _listenAndSwitchToNextSong() async {
     if (_isAutoDetectingNext) return;
 
     setState(() {
       _isAutoDetectingNext = true;
-      _autoDetectStatus = 'Canzone finita! Ascolto (${widget.environment.label}) in corso...';
+      _autoDetectStatus = 'Ascolto brano successivo (${widget.environment.label})...';
     });
 
-    try {
-      final samplePath = await _audioRecorder.startListening();
-      await Future.delayed(Duration(milliseconds: widget.environment.sampleDurationMs));
-      if (!mounted || !_isAutoDetectingNext) {
-        await _audioRecorder.stopListening();
-        return;
-      }
+    final deadline = DateTime.now().add(const Duration(seconds: 30));
+    SyncedSong? nextSong;
+
+    while (mounted && _isAutoDetectingNext && DateTime.now().isBefore(deadline)) {
+      final remainingSec = deadline.difference(DateTime.now()).inSeconds;
+      if (remainingSec < 3) break;
+
+      final chunkMs = widget.environment.sampleDurationMs.clamp(3500, remainingSec * 1000);
 
       setState(() {
-        _autoDetectStatus = 'Identificazione del nuovo brano...';
+        _autoDetectStatus = 'Ascolto continuo (${remainingSec}s)... In attesa di musica';
       });
 
-      await _audioRecorder.stopListening();
-      final recordingEndedAt = DateTime.now();
+      String? samplePath;
+      DateTime? recordingEndedAt;
 
-      final nextSong = await _recognitionService.recognizeFromAudioSample(
-        sampleAudioPath: samplePath,
-        recordingEndedAt: recordingEndedAt,
-        environment: widget.environment,
-      );
+      try {
+        samplePath = await _audioRecorder.startListening();
+        await Future.delayed(Duration(milliseconds: chunkMs));
 
-      if (mounted) {
-        _controller.removeListener(_onSyncUpdate);
-        _controller.dispose();
-
-        setState(() {
-          _currentSong = nextSong;
-          _isAutoDetectingNext = false;
-          _lastScrolledIndex = -1;
-        });
-
-        _initController(0);
-        _checkFavorite();
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '🎵 Brano successivo rilevato: "${nextSong.title}" di ${nextSong.artist}',
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            backgroundColor: AppTheme.accentCyan,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint('Auto-detect error: $e');
-      if (mounted && _isAutoDetectingNext) {
-        setState(() {
-          _autoDetectStatus = 'In attesa del prossimo brano (nuovo tentativo tra 4s)...';
-        });
-        await Future.delayed(const Duration(seconds: 4));
-        if (mounted && _isAutoDetectingNext) {
-          _listenAndSwitchToNextSong();
+        if (!mounted || !_isAutoDetectingNext) {
+          await _audioRecorder.stopListening();
+          break;
         }
+
+        recordingEndedAt = DateTime.now();
+        await _audioRecorder.stopListening();
+
+        if (samplePath == null) continue;
+
+        setState(() {
+          _autoDetectStatus = 'Identificazione del nuovo brano...';
+        });
+
+        try {
+          final song = await _recognitionService.recognizeFromAudioSample(
+            sampleAudioPath: samplePath,
+            recordingEndedAt: recordingEndedAt,
+            environment: widget.environment,
+          );
+          nextSong = song;
+          break; // TROVATO!
+        } on SongNotRecognizedException {
+          debugPrint('AutoDetect: nessun match ancora, continuo ascolto...');
+        }
+      } catch (e) {
+        debugPrint('AutoDetect error: $e');
+        await _audioRecorder.stopListening();
+        await Future.delayed(const Duration(milliseconds: 300));
       }
+    }
+
+    await _audioRecorder.stopListening();
+
+    if (!mounted) return;
+
+    if (nextSong != null) {
+      _controller.removeListener(_onSyncUpdate);
+      _controller.dispose();
+
+      setState(() {
+        _currentSong = nextSong!;
+        _isAutoDetectingNext = false;
+        _lastScrolledIndex = -1;
+      });
+
+      _initController(0);
+      _checkFavorite();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '🎵 Nuovo brano rilevato: "${nextSong.title}" di ${nextSong.artist}',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          backgroundColor: AppTheme.accentCyan,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else if (_isAutoDetectingNext) {
+      setState(() {
+        _isAutoDetectingNext = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nessun brano successivo riconosciuto dopo 30s.'),
+          backgroundColor: AppTheme.surfaceLight,
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
   }
 
