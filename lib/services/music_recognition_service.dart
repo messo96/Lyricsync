@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../data/concert_setlists.dart';
 import '../models/synced_song.dart';
 
 /// Eccezione lanciata quando il fingerprinting audio non trova nessuna corrispondenza
@@ -15,22 +16,37 @@ class SongNotRecognizedException implements Exception {
 
 class MusicRecognitionService {
   final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 10),
-    receiveTimeout: const Duration(seconds: 10),
+    connectTimeout: const Duration(seconds: 8),
+    receiveTimeout: const Duration(seconds: 8),
     headers: {
-      'User-Agent': 'LyricSync/1.0 (Concert lyrics app)',
+      'User-Agent': 'LyricSync/1.0 (Concert Live Lyrics Teleprompter)',
     },
   ));
 
   static const String _historyKey = 'lyricsync_history_v1';
 
-  /// Riconoscimento reale tramite AudD API (free, no key) + testi da LRCLIB.
-  /// Lancia [SongNotRecognizedException] se il brano non viene rilevato.
+  /// Pulisce il titolo rimuovendo suffissi tipici (Remastered, Live, feat., ecc.)
+  static String cleanTitle(String raw) {
+    var s = raw;
+    s = s.replaceAll(RegExp(r'\s*-\s*(Remaster(ed)?(\s*\d+)?|Live.*|Radio Edit|Single).*', caseSensitive: false), '');
+    s = s.replaceAll(RegExp(r'\s*\(.*(feat|with|live|remaster|deluxe|version|edit|audio|video).*\)', caseSensitive: false), '');
+    s = s.replaceAll(RegExp(r'\s*\[.*(feat|with|live|remaster|deluxe|version|edit|audio|video).*\]', caseSensitive: false), '');
+    return s.trim();
+  }
+
+  /// Pulisce il nome dell'artista
+  static String cleanArtist(String raw) {
+    var s = raw;
+    s = s.replaceAll(RegExp(r'\s*(feat\.|featuring|with|&).+', caseSensitive: false), '');
+    return s.trim();
+  }
+
+  /// Riconoscimento reale tramite AudD API + Recupero Testi Multi-Provider (LRCLIB, Lyrics.ovh, AudD Lyrics, Offline)
   Future<SyncedSong> recognizeFromAudioSample({
     required String? sampleAudioPath,
   }) async {
     if (sampleAudioPath == null) {
-      throw const SongNotRecognizedException('Nessun campione audio disponibile.');
+      throw const SongNotRecognizedException('Nessun campione audio registrato.');
     }
 
     final file = File(sampleAudioPath);
@@ -38,15 +54,16 @@ class MusicRecognitionService {
       throw const SongNotRecognizedException('File audio del campione non trovato.');
     }
 
-    // ── 1. Fingerprinting con AudD (gratuito, no API key) ───────────────────
-    String? title;
-    String? artist;
-    String? album;
-    int? durationSec;
+    // ── 1. Fingerprinting con AudD (gratuito) ────────────────────────────────
+    String? rawTitle;
+    String? rawArtist;
+    String? rawAlbum;
+    String? auddLyrics;
+    int durationSec = 180;
 
     try {
       final formData = FormData.fromMap({
-        'return': 'apple_music,spotify',
+        'return': 'lyrics,apple_music,spotify',
         'file': await MultipartFile.fromFile(
           sampleAudioPath,
           filename: 'sample.m4a',
@@ -59,148 +76,269 @@ class MusicRecognitionService {
         data: formData,
         options: Options(
           contentType: 'multipart/form-data',
-          receiveTimeout: const Duration(seconds: 15),
-          sendTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 14),
+          sendTimeout: const Duration(seconds: 14),
         ),
       );
 
       debugPrint('AudD response: ${audDResponse.data}');
 
+      Map<String, dynamic>? resultObj;
       final responseData = audDResponse.data;
       if (responseData is String) {
         final decoded = jsonDecode(responseData) as Map<String, dynamic>;
-        final result = decoded['result'] as Map<String, dynamic>?;
-        if (result != null) {
-          title = result['title'] as String?;
-          artist = result['artist'] as String?;
-          album = result['album'] as String?;
-        }
+        resultObj = decoded['result'] as Map<String, dynamic>?;
       } else if (responseData is Map<String, dynamic>) {
-        final result = responseData['result'] as Map<String, dynamic>?;
-        if (result != null) {
-          title = result['title'] as String?;
-          artist = result['artist'] as String?;
-          album = result['album'] as String?;
+        resultObj = responseData['result'] as Map<String, dynamic>?;
+      }
+
+      if (resultObj != null) {
+        rawTitle = resultObj['title'] as String?;
+        rawArtist = resultObj['artist'] as String?;
+        rawAlbum = resultObj['album'] as String?;
+
+        // Durata da metadata se disponibile
+        final appleMusic = resultObj['apple_music'] as Map<String, dynamic>?;
+        final spotify = resultObj['spotify'] as Map<String, dynamic>?;
+        if (spotify?['duration_ms'] != null) {
+          durationSec = ((spotify!['duration_ms'] as num) / 1000).round();
+        } else if (appleMusic?['durationInMillis'] != null) {
+          durationSec = ((appleMusic!['durationInMillis'] as num) / 1000).round();
+        }
+
+        // Testo restituito direttamente da AudD (se presente)
+        final lyricsObj = resultObj['lyrics'] as Map<String, dynamic>?;
+        if (lyricsObj != null && lyricsObj['lyrics'] is String) {
+          auddLyrics = lyricsObj['lyrics'] as String;
         }
       }
     } catch (e) {
       debugPrint('AudD API error: $e');
-      // Se l'API è irraggiungibile, lanciamo l'eccezione invece di fallback
       throw const SongNotRecognizedException(
-        'Impossibile connettersi al servizio di riconoscimento musicale. Verifica la connessione internet.',
+        'Impossibile contattare il servizio di riconoscimento. Verifica la connessione internet e riprova.',
       );
     }
 
-    // Se AudD non ha trovato nulla, non apriamo niente
-    if (title == null || title.trim().isEmpty || artist == null || artist.trim().isEmpty) {
+    if (rawTitle == null || rawTitle.trim().isEmpty || rawArtist == null || rawArtist.trim().isEmpty) {
       throw const SongNotRecognizedException(
-        'Nessuna canzone rilevata. Avvicina il telefono alla fonte audio e riprova.',
+        'Nessuna canzone rilevata nel microfono. Avvicina il telefono agli altoparlanti e riprova.',
       );
     }
 
-    debugPrint('AudD rilevato: "$title" di "$artist"');
+    final cleanedTitle = cleanTitle(rawTitle);
+    final cleanedArtist = cleanArtist(rawArtist);
+    debugPrint('Canzone riconosciuta: "$rawTitle" ($cleanedTitle) di "$rawArtist" ($cleanedArtist)');
 
-    // ── 2. Cerca i testi sincronizzati (.LRC) su LRCLIB ──────────────────────
-    String rawLrc = '';
-    int actualDurationSec = durationSec ?? 180;
+    // ── 2. Recupero Testi & Sincronia con Fallback Multi-Fonte ───────────────
+    final totalDuration = Duration(seconds: durationSec);
+    final lyricsData = await _fetchLyricsMultiSource(
+      rawTitle: rawTitle,
+      cleanTitle: cleanedTitle,
+      rawArtist: rawArtist,
+      cleanArtist: cleanedArtist,
+      auddLyrics: auddLyrics,
+      duration: totalDuration,
+    );
 
-    try {
-      final lrcResponse = await _dio.get(
-        'https://lrclib.net/api/get',
-        queryParameters: {
-          'track_name': title,
-          'artist_name': artist,
-          if (album != null && album.isNotEmpty) 'album_name': album,
-        },
-      );
-
-      if (lrcResponse.statusCode == 200 && lrcResponse.data is Map) {
-        final data = lrcResponse.data as Map<String, dynamic>;
-        rawLrc = data['syncedLyrics'] as String? ?? data['plainLyrics'] as String? ?? '';
-        final dur = data['duration'];
-        if (dur != null) {
-          actualDurationSec = (dur as num).round();
-        }
-      }
-    } catch (e) {
-      debugPrint('LRCLIB get error: $e — provo con search');
-    }
-
-    // Se get esatto fallisce, proviamo la ricerca generica su LRCLIB
-    if (rawLrc.isEmpty) {
-      try {
-        final searchResp = await _dio.get(
-          'https://lrclib.net/api/search',
-          queryParameters: {'q': '$artist $title'},
-        );
-
-        if (searchResp.statusCode == 200 && searchResp.data is List) {
-          final list = searchResp.data as List;
-          for (final item in list) {
-            final synced = item['syncedLyrics'] as String?;
-            if (synced != null && synced.trim().isNotEmpty) {
-              rawLrc = synced;
-              final dur = item['duration'];
-              if (dur != null) actualDurationSec = (dur as num).round();
-              break;
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('LRCLIB search error: $e');
-      }
-    }
-
-    // Se non abbiamo testi LRC non ha senso aprire il teleprompter vuoto
-    if (rawLrc.isEmpty) {
+    if (lyricsData == null || lyricsData.lines.isEmpty) {
       throw SongNotRecognizedException(
-        '"$title" di $artist rilevata, ma nessun testo sincronizzato disponibile su LRCLIB.\nProva a cercarla manualmente con il tasto 🔍.',
-      );
-    }
-
-    final totalDuration = Duration(seconds: actualDurationSec);
-    final parsedLyrics = SyncedSong.parseLrc(rawLrc, totalDuration);
-
-    if (parsedLyrics.isEmpty) {
-      throw SongNotRecognizedException(
-        '"$title" trovata ma il formato LRC non è valido. Prova la ricerca manuale.',
+        '"$rawTitle" di $rawArtist rilevata con successo, ma il testo non è al momento disponibile nei database gratuiti.\nPuoi cercarla manualmente con l\'icona 🔍.',
       );
     }
 
     final syncedSong = SyncedSong(
       id: 'mic-${DateTime.now().millisecondsSinceEpoch}',
-      title: title,
-      artist: artist,
-      album: album ?? 'Live Detection',
+      title: rawTitle,
+      artist: rawArtist,
+      album: rawAlbum ?? 'Riconoscimento Live',
       duration: totalDuration,
-      detectedPlayOffset: Duration.zero, // offset reale non calcolabile senza ACRCloud
+      detectedPlayOffset: Duration.zero,
       matchedAt: DateTime.now(),
       isLiveConcertVersion: true,
-      rawLrc: rawLrc,
-      lyrics: parsedLyrics,
+      rawLrc: lyricsData.rawLrc,
+      lyrics: lyricsData.lines,
     );
 
     await saveSongToHistory(syncedSong);
     return syncedSong;
   }
 
-  /// Ricerca online gratuita su LRCLIB API per qualsiasi canzone o frammento di testo
+  /// Motore multi-provider per testi sincronizzati e testo piano
+  Future<({String rawLrc, List<LyricLine> lines})?> _fetchLyricsMultiSource({
+    required String rawTitle,
+    required String cleanTitle,
+    required String rawArtist,
+    required String cleanArtist,
+    required String? auddLyrics,
+    required Duration duration,
+  }) async {
+    // Fonte 0: Controlla catalogo inni da concerto offline (Coldplay, Oasis, Queen, Maneskin, ecc.)
+    final offlineMatch = ConcertCatalog.stadiumAnthems.where((s) {
+      final sTitle = s.title.toLowerCase();
+      final sArtist = s.artist.toLowerCase();
+      final cTitle = cleanTitle.toLowerCase();
+      final cArtist = cleanArtist.toLowerCase();
+      return (sTitle.contains(cTitle) || cTitle.contains(sTitle.split(' ').first)) &&
+          (sArtist.contains(cArtist) || cArtist.contains(sArtist));
+    }).firstOrNull;
+
+    if (offlineMatch != null) {
+      debugPrint('Testo trovato nel catalogo inni offline!');
+      return (rawLrc: offlineMatch.rawLrc, lines: offlineMatch.lyrics);
+    }
+
+    String? foundSyncedLrc;
+    String? foundPlainText;
+
+    // Fonte 1: LRCLIB (Testi sincronizzati al millisecondo)
+    try {
+      // 1.A: Tentativo con titolo e artista puliti (senza album per evitare 404)
+      final lrc1 = await _queryLrclibGet(cleanTitle, cleanArtist);
+      if (lrc1 != null) {
+        if (lrc1.synced != null && lrc1.synced!.isNotEmpty) {
+          foundSyncedLrc = lrc1.synced;
+        } else if (lrc1.plain != null && lrc1.plain!.isNotEmpty) {
+          foundPlainText = lrc1.plain;
+        }
+      }
+
+      // 1.B: Se nullo, tentativo con titolo e artista originali
+      if (foundSyncedLrc == null && foundPlainText == null && rawTitle != cleanTitle) {
+        final lrc2 = await _queryLrclibGet(rawTitle, rawArtist);
+        if (lrc2 != null) {
+          if (lrc2.synced != null && lrc2.synced!.isNotEmpty) {
+            foundSyncedLrc = lrc2.synced;
+          } else if (lrc2.plain != null && lrc2.plain!.isNotEmpty) {
+            foundPlainText = lrc2.plain;
+          }
+        }
+      }
+
+      // 1.C: Se ancora nullo, ricerca per query libera su LRCLIB
+      if (foundSyncedLrc == null && foundPlainText == null) {
+        final searchResult = await _queryLrclibSearch('$cleanArtist $cleanTitle');
+        if (searchResult != null) {
+          if (searchResult.synced != null && searchResult.synced!.isNotEmpty) {
+            foundSyncedLrc = searchResult.synced;
+          } else if (searchResult.plain != null && searchResult.plain!.isNotEmpty) {
+            foundPlainText = searchResult.plain;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('LRCLIB fallback err: $e');
+    }
+
+    // Se abbiamo trovato i testi sincronizzati da LRCLIB, li usiamo subito!
+    if (foundSyncedLrc != null && foundSyncedLrc.trim().isNotEmpty) {
+      final parsed = SyncedSong.parseLrc(foundSyncedLrc, duration);
+      if (parsed.isNotEmpty) {
+        return (rawLrc: foundSyncedLrc, lines: parsed);
+      }
+    }
+
+    // Fonte 2: Lyrics.ovh (API gratuita, enorme catalogo di testi italiani e internazionali)
+    if (foundPlainText == null || foundPlainText.trim().isEmpty) {
+      try {
+        final ovhResp = await _dio.get(
+          'https://api.lyrics.ovh/v1/$cleanArtist/$cleanTitle',
+          options: Options(receiveTimeout: const Duration(seconds: 4)),
+        );
+        if (ovhResp.statusCode == 200 && ovhResp.data is Map) {
+          final lyrics = ovhResp.data['lyrics'] as String?;
+          if (lyrics != null && lyrics.trim().isNotEmpty) {
+            foundPlainText = lyrics;
+            debugPrint('Testo trovato su Lyrics.ovh!');
+          }
+        }
+      } catch (e) {
+        debugPrint('Lyrics.ovh fallback err: $e');
+      }
+    }
+
+    // Fonte 3: Testo restituito da AudD
+    if ((foundPlainText == null || foundPlainText.trim().isEmpty) && auddLyrics != null && auddLyrics.trim().isNotEmpty) {
+      foundPlainText = auddLyrics;
+      debugPrint('Testo utilizzato da AudD response!');
+    }
+
+    // Se abbiamo testo piano (da LRCLIB plain, da Lyrics.ovh o da AudD), attiviamo l'Auto-Sync intelligente
+    if (foundPlainText != null && foundPlainText.trim().isNotEmpty) {
+      final autoSyncedLines = SyncedSong.parsePlainLyrics(foundPlainText, duration);
+      if (autoSyncedLines.isNotEmpty) {
+        final generatedLrc = SyncedSong.toLrcString(autoSyncedLines);
+        return (rawLrc: generatedLrc, lines: autoSyncedLines);
+      }
+    }
+
+    return null;
+  }
+
+  Future<({String? synced, String? plain})?> _queryLrclibGet(String title, String artist) async {
+    try {
+      final res = await _dio.get(
+        'https://lrclib.net/api/get',
+        queryParameters: {
+          'track_name': title,
+          'artist_name': artist,
+        },
+        options: Options(receiveTimeout: const Duration(seconds: 4)),
+      );
+      if (res.statusCode == 200 && res.data is Map) {
+        final data = res.data as Map<String, dynamic>;
+        return (
+          synced: data['syncedLyrics'] as String?,
+          plain: data['plainLyrics'] as String?,
+        );
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<({String? synced, String? plain})?> _queryLrclibSearch(String query) async {
+    try {
+      final res = await _dio.get(
+        'https://lrclib.net/api/search',
+        queryParameters: {'q': query},
+        options: Options(receiveTimeout: const Duration(seconds: 4)),
+      );
+      if (res.statusCode == 200 && res.data is List) {
+        final list = res.data as List;
+        String? firstPlain;
+        for (final item in list) {
+          final synced = item['syncedLyrics'] as String?;
+          if (synced != null && synced.trim().isNotEmpty) {
+            return (synced: synced, plain: item['plainLyrics'] as String?);
+          }
+          firstPlain ??= item['plainLyrics'] as String?;
+        }
+        if (firstPlain != null) {
+          return (synced: null, plain: firstPlain);
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Ricerca manuale su LRCLIB e Lyrics.ovh
   Future<List<SyncedSong>> searchLrclib(String query) async {
     final clean = query.trim();
     if (clean.isEmpty) return [];
+
+    final results = <SyncedSong>[];
 
     try {
       final response = await _dio.get(
         'https://lrclib.net/api/search',
         queryParameters: {'q': clean},
+        options: Options(receiveTimeout: const Duration(seconds: 5)),
       );
 
       if (response.statusCode == 200 && response.data is List) {
-        final List list = response.data as List;
-        final results = <SyncedSong>[];
-
+        final list = response.data as List;
         for (final item in list) {
           final syncedLyrics = item['syncedLyrics'] as String?;
+          final plainLyrics = item['plainLyrics'] as String?;
           final trackName = item['trackName'] as String? ?? 'Sconosciuto';
           final artistName = item['artistName'] as String? ?? 'Artista';
           final albumName = item['albumName'] as String? ?? 'Album';
@@ -208,8 +346,8 @@ class MusicRecognitionService {
           final totalDuration = Duration(seconds: durationSec);
 
           if (syncedLyrics != null && syncedLyrics.trim().isNotEmpty) {
-            final parsedLyrics = SyncedSong.parseLrc(syncedLyrics, totalDuration);
-            if (parsedLyrics.isNotEmpty) {
+            final parsed = SyncedSong.parseLrc(syncedLyrics, totalDuration);
+            if (parsed.isNotEmpty) {
               results.add(SyncedSong(
                 id: 'lrclib-${item['id'] ?? DateTime.now().millisecondsSinceEpoch}',
                 title: trackName,
@@ -220,19 +358,45 @@ class MusicRecognitionService {
                 matchedAt: DateTime.now(),
                 isLiveConcertVersion: false,
                 rawLrc: syncedLyrics,
-                lyrics: parsedLyrics,
+                lyrics: parsed,
+              ));
+            }
+          } else if (plainLyrics != null && plainLyrics.trim().isNotEmpty) {
+            final autoSynced = SyncedSong.parsePlainLyrics(plainLyrics, totalDuration);
+            if (autoSynced.isNotEmpty) {
+              results.add(SyncedSong(
+                id: 'lrclib-${item['id'] ?? DateTime.now().millisecondsSinceEpoch}',
+                title: trackName,
+                artist: artistName,
+                album: albumName,
+                duration: totalDuration,
+                detectedPlayOffset: Duration.zero,
+                matchedAt: DateTime.now(),
+                isLiveConcertVersion: false,
+                rawLrc: SyncedSong.toLrcString(autoSynced),
+                lyrics: autoSynced,
               ));
             }
           }
         }
-
-        return results;
       }
     } catch (e) {
-      debugPrint('LRCLIB search error: $e');
+      debugPrint('Search error: $e');
     }
 
-    return [];
+    // Se pochi risultati, cerca anche nel catalogo offline
+    final queryLower = clean.toLowerCase();
+    for (final song in ConcertCatalog.stadiumAnthems) {
+      if (song.title.toLowerCase().contains(queryLower) ||
+          song.artist.toLowerCase().contains(queryLower) ||
+          song.lyrics.any((l) => l.text.toLowerCase().contains(queryLower))) {
+        if (!results.any((r) => r.title == song.title)) {
+          results.add(song);
+        }
+      }
+    }
+
+    return results;
   }
 
   /// Salva il brano nella cronologia recente dell'utente

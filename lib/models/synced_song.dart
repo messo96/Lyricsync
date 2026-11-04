@@ -88,9 +88,16 @@ class SyncedSong {
     required this.lyrics,
   });
 
-  /// Parser robusto per LRC standard `[mm:ss.xx]` e con traduzione separata da `|`
+  /// Parser robusto per LRC standard `[mm:ss.xx]`.
+  /// Se il testo non contiene tag timestamp, attiva automaticamente il sincronizzatore intelligente da testo piano.
   static List<LyricLine> parseLrc(String rawLrc, Duration totalDuration) {
     if (rawLrc.trim().isEmpty) return [];
+
+    // Se non ci sono timestamp LRC tipo [00:15.20], passa al parser per testo piano
+    final hasLrcTimestamps = RegExp(r'\[\d{1,2}:\d{2}').hasMatch(rawLrc);
+    if (!hasLrcTimestamps) {
+      return parsePlainLyrics(rawLrc, totalDuration);
+    }
 
     final regex = RegExp(r'^\[(\d{1,2}):(\d{2})(?:\.(\d{2,3}))?\]\s*(.*)$');
     final parsedRaw = <({Duration start, String lineContent})>[];
@@ -120,7 +127,9 @@ class SyncedSong {
     }
 
     parsedRaw.sort((a, b) => a.start.compareTo(b.start));
-    if (parsedRaw.isEmpty) return [];
+    if (parsedRaw.isEmpty) {
+      return parsePlainLyrics(rawLrc, totalDuration);
+    }
 
     final result = <LyricLine>[];
 
@@ -143,7 +152,7 @@ class SyncedSong {
 
       final lineDuration = nextStart - current.start;
       final tokens = text.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
-      
+
       final words = <LyricWord>[];
       if (tokens.isNotEmpty && lineDuration.inMilliseconds > 0) {
         final wordStepMs = (lineDuration.inMilliseconds / tokens.length).round();
@@ -170,6 +179,91 @@ class SyncedSong {
     }
 
     return result;
+  }
+
+  /// Converte testo piano in versi con sincronizzazione stimata su tutta la durata
+  static List<LyricLine> parsePlainLyrics(String plainText, Duration totalDuration) {
+    if (plainText.trim().isEmpty) return [];
+
+    final rawLines = plainText
+        .split('\n')
+        .map((l) => l.trim())
+        // Rimuove intestazioni tipo [Chorus], [Verse 1], [Intro]
+        .where((l) => l.isNotEmpty && !(l.startsWith('[') && l.endsWith(']')))
+        .toList();
+
+    if (rawLines.isEmpty) return [];
+
+    final effectiveDuration = totalDuration.inSeconds > 30
+        ? totalDuration
+        : Duration(seconds: rawLines.length * 5);
+
+    // Intro e outro buffer
+    final introMs = (effectiveDuration.inMilliseconds * 0.06).clamp(5000.0, 16000.0).round();
+    final outroMs = (effectiveDuration.inMilliseconds * 0.05).clamp(4000.0, 14000.0).round();
+    final availableMs = (effectiveDuration.inMilliseconds - introMs - outroMs).clamp(20000, 600000);
+
+    // Calcolo pesi proporzionali in base alla lunghezza dei versi
+    int totalWeight = 0;
+    final weights = <int>[];
+    for (final line in rawLines) {
+      final w = (line.length + line.split(' ').length * 4).clamp(10, 140);
+      weights.add(w);
+      totalWeight += w;
+    }
+
+    final result = <LyricLine>[];
+    int currentMs = introMs;
+
+    for (int i = 0; i < rawLines.length; i++) {
+      final line = rawLines[i];
+      final lineDurationMs = totalWeight > 0
+          ? ((weights[i] / totalWeight) * availableMs).round().clamp(1900, 8500)
+          : (availableMs ~/ rawLines.length);
+
+      final start = Duration(milliseconds: currentMs);
+      final end = Duration(milliseconds: currentMs + lineDurationMs);
+      currentMs += lineDurationMs;
+
+      final tokens = line.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+      final words = <LyricWord>[];
+      if (tokens.isNotEmpty && lineDurationMs > 0) {
+        final wordStepMs = (lineDurationMs / tokens.length).round();
+        for (int wIdx = 0; wIdx < tokens.length; wIdx++) {
+          final wStart = start + Duration(milliseconds: wordStepMs * wIdx);
+          final wEnd = wIdx == tokens.length - 1
+              ? end
+              : start + Duration(milliseconds: wordStepMs * (wIdx + 1));
+          words.add(LyricWord(
+            text: tokens[wIdx],
+            start: wStart,
+            end: wEnd,
+          ));
+        }
+      }
+
+      result.add(LyricLine(
+        timestamp: start,
+        endTimestamp: end,
+        text: line,
+        words: words,
+      ));
+    }
+
+    return result;
+  }
+
+  /// Converte una lista di LyricLine in stringa LRC standard
+  static String toLrcString(List<LyricLine> lines) {
+    final buffer = StringBuffer();
+    for (final line in lines) {
+      final totalSec = line.timestamp.inSeconds;
+      final min = (totalSec ~/ 60).toString().padLeft(2, '0');
+      final sec = (totalSec % 60).toString().padLeft(2, '0');
+      final frac = ((line.timestamp.inMilliseconds % 1000) ~/ 10).toString().padLeft(2, '0');
+      buffer.writeln('[$min:$sec.$frac] ${line.text}');
+    }
+    return buffer.toString();
   }
 
   Map<String, dynamic> toJson() => {
@@ -223,4 +317,3 @@ class SyncedSong {
     );
   }
 }
-
