@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
@@ -50,6 +51,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
   // Stato visibilità HUD (menu superiore e barra sync inferiore)
   bool _showOverlay = true;
+  Timer? _overlayAutoHideTimer;
 
   // AutoPlay: ascolto automatico del brano successivo
   bool _isAutoDetectingNext = false;
@@ -74,6 +76,9 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
     _initController(widget.initialOffsetMs);
     _checkFavorite();
+
+    // Avvia il timer di 5 secondi per nascondere automaticamente i menu
+    _startOverlayAutoHideTimer();
   }
 
   void _onPipModeChanged() {
@@ -224,6 +229,24 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
     setState(() {
       _showOverlay = !_showOverlay;
     });
+    if (_showOverlay) {
+      _startOverlayAutoHideTimer();
+    } else {
+      _overlayAutoHideTimer?.cancel();
+    }
+  }
+
+  /// Avvia il timer di 5 secondi per far scomparire i menu sopra e sotto automaticamente
+  void _startOverlayAutoHideTimer() {
+    _overlayAutoHideTimer?.cancel();
+    if (!_showOverlay) return;
+    _overlayAutoHideTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && _showOverlay) {
+        setState(() {
+          _showOverlay = false;
+        });
+      }
+    });
   }
 
   Future<void> _checkFavorite() async {
@@ -238,6 +261,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   Future<void> _toggleFavorite() async {
     final nowFav = await _recognitionService.toggleFavorite(_currentSong);
     if (mounted) {
+      _startOverlayAutoHideTimer();
       setState(() {
         _isFavorite = nowFav;
       });
@@ -291,6 +315,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
   @override
   void dispose() {
+    _overlayAutoHideTimer?.cancel();
     SystemService.isPipModeNotifier.removeListener(_onPipModeChanged);
     SystemService.keepScreenOn(false);
     SystemService.setAutoPip(false);
@@ -487,8 +512,14 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                         ),
                         child: DelayAdjusterBar(
                           offsetMs: _controller.manualPhaseOffsetMs,
-                          onAdjust: (delta) => _controller.adjustOffset(delta),
-                          onReset: () => _controller.resetOffset(),
+                          onAdjust: (delta) {
+                            _controller.adjustOffset(delta);
+                            _startOverlayAutoHideTimer();
+                          },
+                          onReset: () {
+                            _controller.resetOffset();
+                            _startOverlayAutoHideTimer();
+                          },
                         ),
                       ),
                     ),
@@ -901,7 +932,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               color: _showTranslation ? AppTheme.accentCyan : AppTheme.textMuted,
               size: 20,
             ),
-            onPressed: () => setState(() => _showTranslation = !_showTranslation),
+            onPressed: () {
+              setState(() => _showTranslation = !_showTranslation);
+              _startOverlayAutoHideTimer();
+            },
           ),
 
           // Dimensione testo
@@ -924,6 +958,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                   _fontScale = 1.0;
                 }
               });
+              _startOverlayAutoHideTimer();
             },
           ),
 
@@ -950,7 +985,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               color: AppTheme.accentAmber,
               size: 20,
             ),
-            onPressed: _toggleOrientation,
+            onPressed: () {
+              _startOverlayAutoHideTimer();
+              _toggleOrientation();
+            },
           ),
 
           // Tasto Rileva Brano Successivo (Auto-Riconoscimento o Salto)
@@ -976,7 +1014,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               color: AppTheme.accentAmber,
               size: 24,
             ),
-            onPressed: () => _controller.togglePlayPause(),
+            onPressed: () {
+              _controller.togglePlayPause();
+              _startOverlayAutoHideTimer();
+            },
           ),
 
           const SizedBox(width: 4),
@@ -1034,7 +1075,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                 color: _showTranslation ? AppTheme.accentCyan : AppTheme.textMuted,
                 size: 20,
               ),
-              onPressed: () => setState(() => _showTranslation = !_showTranslation),
+              onPressed: () {
+                setState(() => _showTranslation = !_showTranslation);
+                _startOverlayAutoHideTimer();
+              },
             ),
             IconButton(
               tooltip: 'Dimensione testo',
@@ -1053,6 +1097,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                     _fontScale = 1.0;
                   }
                 });
+                _startOverlayAutoHideTimer();
               },
             ),
             IconButton(
@@ -1080,7 +1125,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                 color: AppTheme.textSecondary,
                 size: 22,
               ),
-              onPressed: _toggleOrientation,
+              onPressed: () {
+                _startOverlayAutoHideTimer();
+                _toggleOrientation();
+              },
             ),
             IconButton(
               tooltip: _controller.isPlaying ? 'Pausa' : 'Riprendi',
@@ -1089,7 +1137,10 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                 color: AppTheme.accentAmber,
                 size: 26,
               ),
-              onPressed: () => _controller.togglePlayPause(),
+              onPressed: () {
+                _controller.togglePlayPause();
+                _startOverlayAutoHideTimer();
+              },
             ),
           ],
         ),
