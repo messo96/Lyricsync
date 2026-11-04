@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/synced_song.dart';
+import '../services/music_recognition_service.dart';
 import '../services/realtime_lyrics_sync_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/concert_glow_banner.dart';
 import '../widgets/delay_adjuster_bar.dart';
+import '../widgets/spotify_icon_button.dart';
 import '../widgets/teleprompter_line_tile.dart';
 
 class LyricsTeleprompterScreen extends StatefulWidget {
@@ -25,12 +28,14 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   late final RealtimeLyricsSyncController _controller;
   final ItemScrollController _scrollController = ItemScrollController();
   final ItemPositionsListener _positionsListener = ItemPositionsListener.create();
+  final MusicRecognitionService _recognitionService = MusicRecognitionService();
 
   int _lastScrolledIndex = -1;
   bool _showTranslation = true;
   bool _isGlowEnabled = false;
   double _fontScale = 1.0;
   bool _isUserScrolling = false;
+  bool _isFavorite = false;
 
   @override
   void initState() {
@@ -40,6 +45,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
       initialManualOffsetMs: widget.initialOffsetMs,
     );
     _controller.addListener(_onSyncUpdate);
+    _checkFavorite();
 
     // Salto istantaneo al punto esatto del brano appena la vista è renderizzata
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -52,6 +58,52 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
         );
       }
     });
+  }
+
+  Future<void> _checkFavorite() async {
+    final fav = await _recognitionService.isFavorite(widget.song.title, widget.song.artist);
+    if (mounted) {
+      setState(() {
+        _isFavorite = fav;
+      });
+    }
+  }
+
+  Future<void> _toggleFavorite() async {
+    final nowFav = await _recognitionService.toggleFavorite(widget.song);
+    if (mounted) {
+      setState(() {
+        _isFavorite = nowFav;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            nowFav ? '❤️ "${widget.song.title}" salvata nei preferiti!' : 'Canzone rimossa dai preferiti',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          duration: const Duration(seconds: 2),
+          backgroundColor: nowFav ? const Color(0xFFEF4444) : AppTheme.surfaceLight,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openSpotify() async {
+    final target = widget.song.spotifyUrl != null && widget.song.spotifyUrl!.isNotEmpty
+        ? widget.song.spotifyUrl!
+        : 'https://open.spotify.com/search/${Uri.encodeComponent('${widget.song.artist} ${widget.song.title}')}';
+    final uri = Uri.parse(target);
+
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+    } catch (e) {
+      debugPrint('Errore apertura Spotify: $e');
+    }
   }
 
   void _onSyncUpdate() {
@@ -89,53 +141,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.song.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Row(
-              children: [
-                Text(
-                  widget.song.artist,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppTheme.textSecondary,
-                  ),
-                ),
-                if (widget.song.isLiveConcertVersion) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                    decoration: BoxDecoration(
-                      color: AppTheme.accentAmber.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Text(
-                      'LIVE',
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.accentAmber,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
+        title: const Text('Live Teleprompter'),
         actions: [
           // Traduzione ON / OFF
           IconButton(
@@ -204,48 +210,18 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            // ── TOP HEADER CARD: Copertina, Titolo, Cantanti, Preferito (Cuore) e Spotify ──
+            _buildSongHeaderCard(),
+
             // Banner concert glow
             ConcertGlowBanner(
               isEnabled: _isGlowEnabled,
               onToggle: () => setState(() => _isGlowEnabled = !_isGlowEnabled),
             ),
 
-            // Orologio sincronizzato del concerto
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.mic_external_on_rounded, size: 14, color: AppTheme.accentAmber),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Live Teleprompter · Sincronia attiva',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: AppTheme.accentAmber.withValues(alpha: 0.9),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    '${_formatDuration(_controller.currentPosition)} / ${_formatDuration(widget.song.duration)}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontFamily: 'monospace',
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
             const Divider(height: 1, color: Color(0xFF1E293B)),
 
-            // Lista principale testi con ScrollablePositionedList
+            // ── AREA CENTRALE: Lista testi con auto-scroll a 60fps ─────────────────
             Expanded(
               child: NotificationListener<ScrollNotification>(
                 onNotification: (notification) {
@@ -267,7 +243,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                   itemPositionsListener: _positionsListener,
                   initialScrollIndex: _controller.activeLineIndex >= 0 ? _controller.activeLineIndex : 0,
                   initialAlignment: 0.35,
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
                   itemCount: widget.song.lyrics.length,
                   itemBuilder: (context, index) {
                     final line = widget.song.lyrics[index];
@@ -292,9 +268,9 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
               ),
             ),
 
-            // Barra di regolazione ritardo palco / eco stadio
+            // ── SOTTO IL TESTO: Pannello di Sincronizzazione Manuale ─────────────
             Padding(
-              padding: const EdgeInsets.only(left: 16, right: 16, bottom: 12, top: 4),
+              padding: const EdgeInsets.only(left: 14, right: 14, bottom: 12, top: 4),
               child: DelayAdjusterBar(
                 offsetMs: _controller.manualPhaseOffsetMs,
                 onAdjust: (delta) => _controller.adjustOffset(delta),
@@ -303,6 +279,132 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSongHeaderCard() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF1E293B)),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black45,
+            blurRadius: 10,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Copertina del brano (o placeholder musicale)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: widget.song.coverArtUrl != null && widget.song.coverArtUrl!.isNotEmpty
+                ? Image.network(
+                    widget.song.coverArtUrl!,
+                    width: 54,
+                    height: 54,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _buildArtworkPlaceholder(),
+                  )
+                : _buildArtworkPlaceholder(),
+          ),
+
+          const SizedBox(width: 12),
+
+          // Titolo, Cantanti & Minutaggio
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.song.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  widget.song.artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.timer_outlined, size: 12, color: AppTheme.accentAmber),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${_formatDuration(_controller.currentPosition)} / ${_formatDuration(widget.song.duration)}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(width: 8),
+
+          // Pulsante Cuore (Salva nei Preferiti)
+          IconButton(
+            tooltip: _isFavorite ? 'Rimuovi dai preferiti' : 'Salva nei preferiti',
+            icon: Icon(
+              _isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+              color: _isFavorite ? const Color(0xFFEF4444) : AppTheme.textSecondary,
+              size: 24,
+            ),
+            onPressed: _toggleFavorite,
+          ),
+
+          // Icona Spotify (Apre il brano direttamente su Spotify)
+          SpotifyIconButton(
+            onTap: _openSpotify,
+            size: 36,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildArtworkPlaceholder() {
+    return Container(
+      width: 54,
+      height: 54,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(color: AppTheme.accentAmber.withValues(alpha: 0.3)),
+      ),
+      child: const Icon(
+        Icons.album_rounded,
+        color: AppTheme.accentAmber,
+        size: 28,
       ),
     );
   }

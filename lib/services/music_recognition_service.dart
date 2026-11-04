@@ -97,6 +97,8 @@ class MusicRecognitionService {
     String? rawArtist;
     String? rawAlbum;
     String? auddLyrics;
+    String? coverArtUrl;
+    String? spotifyUrl;
     int durationSec = 180;
     Duration detectedPlayOffset = Duration.zero;
 
@@ -153,14 +155,35 @@ class MusicRecognitionService {
           debugPrint('Sincronia Live Calibrata: timecode=$rawTimecode ($sampleOffset) + networkDelay=$networkDelay => offset=$detectedPlayOffset');
         }
 
-        // Durata da metadata se disponibile
+        // Durata e copertina da metadata Spotify / Apple Music
         final appleMusic = resultObj['apple_music'] as Map<String, dynamic>?;
         final spotify = resultObj['spotify'] as Map<String, dynamic>?;
-        if (spotify?['duration_ms'] != null) {
-          durationSec = ((spotify!['duration_ms'] as num) / 1000).round();
+
+        if (spotify != null) {
+          if (spotify['duration_ms'] != null) {
+            durationSec = ((spotify['duration_ms'] as num) / 1000).round();
+          }
+          final albumObj = spotify['album'] as Map<String, dynamic>?;
+          final images = albumObj?['images'] as List?;
+          if (images != null && images.isNotEmpty) {
+            coverArtUrl = images[0]['url'] as String?;
+          }
+          final externalUrls = spotify['external_urls'] as Map<String, dynamic>?;
+          spotifyUrl = externalUrls?['spotify'] as String?;
         } else if (appleMusic?['durationInMillis'] != null) {
           durationSec = ((appleMusic!['durationInMillis'] as num) / 1000).round();
         }
+
+        if (coverArtUrl == null && appleMusic != null) {
+          final artwork = appleMusic['artwork'] as Map<String, dynamic>?;
+          final rawArtUrl = artwork?['url'] as String?;
+          if (rawArtUrl != null) {
+            coverArtUrl = rawArtUrl.replaceAll('{w}', '300').replaceAll('{h}', '300');
+          }
+        }
+
+        // Fallback link Spotify per apertura diretta app o web
+        spotifyUrl ??= 'https://open.spotify.com/search/${Uri.encodeComponent('$rawArtist $rawTitle')}';
 
         // Testo restituito direttamente da AudD (se presente)
         final lyricsObj = resultObj['lyrics'] as Map<String, dynamic>?;
@@ -211,6 +234,8 @@ class MusicRecognitionService {
       detectedPlayOffset: detectedPlayOffset,
       matchedAt: DateTime.now(),
       isLiveConcertVersion: true,
+      coverArtUrl: coverArtUrl,
+      spotifyUrl: spotifyUrl,
       rawLrc: lyricsData.rawLrc,
       lyrics: lyricsData.lines,
     );
@@ -497,6 +522,59 @@ class MusicRecognitionService {
       await prefs.remove(_historyKey);
     } catch (e) {
       debugPrint('Errore svuotamento cronologia: $e');
+    }
+  }
+
+  // ── GESTIONE PREFERITI (CUORE) ──────────────────────────────────────────
+  static const String _favoritesKey = 'lyricsync_favorites_v1';
+
+  /// Controlla se la canzone è nei preferiti
+  Future<bool> isFavorite(String title, String artist) async {
+    final favs = await getFavorites();
+    return favs.any((s) =>
+        s.title.trim().toLowerCase() == title.trim().toLowerCase() &&
+        s.artist.trim().toLowerCase() == artist.trim().toLowerCase());
+  }
+
+  /// Aggiunge o rimuove dai preferiti, restituisce true se ora è preferita
+  Future<bool> toggleFavorite(SyncedSong song) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final favs = await getFavorites();
+      final index = favs.indexWhere((s) =>
+          s.title.trim().toLowerCase() == song.title.trim().toLowerCase() &&
+          s.artist.trim().toLowerCase() == song.artist.trim().toLowerCase());
+
+      bool nowFavorite;
+      if (index >= 0) {
+        favs.removeAt(index);
+        nowFavorite = false;
+      } else {
+        favs.insert(0, song);
+        nowFavorite = true;
+      }
+
+      final jsonList = favs.map((s) => s.toJson()).toList();
+      await prefs.setString(_favoritesKey, jsonEncode(jsonList));
+      return nowFavorite;
+    } catch (e) {
+      debugPrint('Errore toggle preferiti: $e');
+      return false;
+    }
+  }
+
+  /// Recupera l'elenco dei brani preferiti
+  Future<List<SyncedSong>> getFavorites() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_favoritesKey);
+      if (raw == null || raw.isEmpty) return [];
+
+      final decoded = jsonDecode(raw) as List;
+      return decoded.map((item) => SyncedSong.fromJson(item as Map<String, dynamic>)).toList();
+    } catch (e) {
+      debugPrint('Errore caricamento preferiti: $e');
+      return [];
     }
   }
 }

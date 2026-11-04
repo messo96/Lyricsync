@@ -69,6 +69,7 @@ class SyncedSong {
   final String? musicalKey;
   final bool isLiveConcertVersion;
   final String? coverArtUrl;
+  final String? spotifyUrl;
   final String rawLrc;
   final List<LyricLine> lyrics;
 
@@ -84,6 +85,7 @@ class SyncedSong {
     this.musicalKey,
     this.isLiveConcertVersion = true,
     this.coverArtUrl,
+    this.spotifyUrl,
     required this.rawLrc,
     required this.lyrics,
   });
@@ -278,6 +280,7 @@ class SyncedSong {
         'musicalKey': musicalKey,
         'isLiveConcertVersion': isLiveConcertVersion,
         'coverArtUrl': coverArtUrl,
+        'spotifyUrl': spotifyUrl,
         'rawLrc': rawLrc,
         'lyrics': lyrics.map((l) => l.toJson()).toList(),
       };
@@ -312,6 +315,7 @@ class SyncedSong {
       musicalKey: json['musicalKey'] as String?,
       isLiveConcertVersion: json['isLiveConcertVersion'] as bool? ?? true,
       coverArtUrl: json['coverArtUrl'] as String?,
+      spotifyUrl: json['spotifyUrl'] as String?,
       rawLrc: rawLrc,
       lyrics: lyricsList,
     );

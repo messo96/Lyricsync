@@ -55,6 +55,8 @@ class ConcertCatalog {
       bpm: 138,
       musicalKey: 'Mib magg (Eb)',
       isLiveConcertVersion: true,
+      coverArtUrl: 'https://i.scdn.co/image/ab67616d0000b273b526685827361845ebaa3d8c',
+      spotifyUrl: 'https://open.spotify.com/track/7LVHVU3tWfcxj5aiPsvW4Q',
       rawLrc: rawLrc,
       lyrics: SyncedSong.parseLrc(rawLrc, totalDuration),
     );
@@ -97,6 +99,8 @@ class ConcertCatalog {
       bpm: 87,
       musicalKey: 'Fa# min (F#m)',
       isLiveConcertVersion: true,
+      coverArtUrl: 'https://i.scdn.co/image/ab67616d0000b273d4d380753232bbfe1dfb85f2',
+      spotifyUrl: 'https://open.spotify.com/track/1qHe2fHq1lI2eP9R57V26Q',
       rawLrc: rawLrc,
       lyrics: SyncedSong.parseLrc(rawLrc, totalDuration),
     );
@@ -140,6 +144,8 @@ class ConcertCatalog {
       bpm: 72,
       musicalKey: 'Sib magg (Bb)',
       isLiveConcertVersion: true,
+      coverArtUrl: 'https://i.scdn.co/image/ab67616d0000b273ce4f1737bc8a646c8c4bd25a',
+      spotifyUrl: 'https://open.spotify.com/track/7tFiyTwD0nx5a1eklYtX2J',
       rawLrc: rawLrc,
       lyrics: SyncedSong.parseLrc(rawLrc, totalDuration),
     );
@@ -181,6 +187,8 @@ class ConcertCatalog {
       bpm: 134,
       musicalKey: 'Mi min (Em)',
       isLiveConcertVersion: true,
+      coverArtUrl: 'https://i.scdn.co/image/ab67616d0000b27320b9e81b67f339cfdfb07cc5',
+      spotifyUrl: 'https://open.spotify.com/track/776AftMmFFAWUIEAb3eUmv',
       rawLrc: rawLrc,
       lyrics: SyncedSong.parseLrc(rawLrc, totalDuration),
     );
@@ -216,6 +224,8 @@ class ConcertCatalog {
       bpm: 171,
       musicalKey: 'Fa min (Fm)',
       isLiveConcertVersion: true,
+      coverArtUrl: 'https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36',
+      spotifyUrl: 'https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b',
       rawLrc: rawLrc,
       lyrics: SyncedSong.parseLrc(rawLrc, totalDuration),
     );
@@ -250,6 +260,8 @@ class ConcertCatalog {
       bpm: 84,
       musicalKey: 'Do magg (C)',
       isLiveConcertVersion: true,
+      coverArtUrl: 'https://i.scdn.co/image/ab67616d0000b273d4d380753232bbfe1dfb85f2',
+      spotifyUrl: 'https://open.spotify.com/track/02MWAaffLxlfxAUY7c5dvx',
       rawLrc: rawLrc,
       lyrics: SyncedSong.parseLrc(rawLrc, totalDuration),
     );
