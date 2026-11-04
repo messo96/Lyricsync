@@ -39,31 +39,19 @@ class TeleprompterLineTile extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(12),
       splashColor: Colors.transparent,
       highlightColor: Colors.transparent,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 240),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
         margin: EdgeInsets.symmetric(
-          vertical: isLandscape ? 6 : 8,
+          vertical: isLandscape ? 8 : 10,
           horizontal: isLandscape ? 8 : 4,
         ),
-        padding: EdgeInsets.symmetric(
-          vertical: isActive ? (isLandscape ? 14 : 16) : 8,
-          horizontal: isActive ? (isLandscape ? 20 : 16) : 8,
-        ),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: isActive
-              ? AppTheme.accentAmber.withValues(alpha: 0.12)
-              : Colors.transparent,
-          border: isActive
-              ? Border.all(
-                  color: AppTheme.accentAmber.withValues(alpha: 0.4),
-                  width: 1.5,
-                )
-              : Border.all(color: Colors.transparent),
+        padding: const EdgeInsets.symmetric(
+          vertical: 4,
+          horizontal: 4,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
