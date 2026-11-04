@@ -38,9 +38,19 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   bool _isUserScrolling = false;
   bool _isFavorite = false;
 
+  // Stato visibilità HUD (menu superiore e barra sync inferiore)
+  bool _showOverlay = true;
+
   @override
   void initState() {
     super.initState();
+
+    // ── ORIZZONTALE DI DEFAULT: Apri subito in landscape ──
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+
     _controller = RealtimeLyricsSyncController(
       song: widget.song,
       initialManualOffsetMs: widget.initialOffsetMs,
@@ -58,6 +68,12 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
           alignment: 0.35,
         );
       }
+    });
+  }
+
+  void _toggleOverlay() {
+    setState(() {
+      _showOverlay = !_showOverlay;
     });
   }
 
@@ -128,6 +144,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
   void dispose() {
     _controller.removeListener(_onSyncUpdate);
     _controller.dispose();
+    // Ripristina l'orientamento verticale standard quando si esce
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -169,103 +186,13 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
       },
       child: Scaffold(
         backgroundColor: AppTheme.background,
-        appBar: AppBar(
-          title: Text(isLandscape ? 'LyricSync (Orizzontale)' : 'Live Teleprompter'),
-          actions: [
-            // Traduzione ON / OFF
-            IconButton(
-              tooltip: _showTranslation ? 'Nascondi traduzione' : 'Mostra traduzione',
-              icon: Icon(
-                Icons.translate_rounded,
-                color: _showTranslation ? AppTheme.accentCyan : AppTheme.textMuted,
-                size: 20,
-              ),
-              onPressed: () {
-                setState(() {
-                  _showTranslation = !_showTranslation;
-                });
-              },
-            ),
-
-            // Scalatura dimensione caratteri
-            IconButton(
-              tooltip: 'Dimensione testo',
-              icon: Icon(
-                _fontScale > 1.0 ? Icons.text_increase_rounded : Icons.format_size_rounded,
-                color: _fontScale > 1.0 ? AppTheme.accentAmber : AppTheme.textSecondary,
-                size: 20,
-              ),
-              onPressed: () {
-                setState(() {
-                  if (_fontScale >= 1.3) {
-                    _fontScale = 0.9;
-                  } else if (_fontScale >= 1.0) {
-                    _fontScale = 1.3;
-                  } else {
-                    _fontScale = 1.0;
-                  }
-                });
-              },
-            ),
-
-            // ── PULSANTE ROTAZIONE SCHERMO (Orizzontale per gruppo / Verticale) ──
-            IconButton(
-              tooltip: isLandscape
-                  ? 'Ripristina orientamento verticale'
-                  : 'Gira lo schermo in orizzontale (visualizzazione di gruppo)',
-              icon: Icon(
-                isLandscape ? Icons.screen_lock_portrait_rounded : Icons.screen_rotation_rounded,
-                color: isLandscape ? AppTheme.accentAmber : AppTheme.textSecondary,
-                size: 22,
-              ),
-              onPressed: _toggleOrientation,
-            ),
-
-            // Modalità Concert Glow (luce per concerto)
-            IconButton(
-              tooltip: 'Concert Glowstick Mode',
-              icon: Icon(
-                Icons.flare_rounded,
-                color: _isGlowEnabled ? AppTheme.accentAmber : AppTheme.textMuted,
-                size: 20,
-              ),
-              onPressed: () {
-                setState(() {
-                  _isGlowEnabled = !_isGlowEnabled;
-                });
-              },
-            ),
-
-            // Play / Pause
-            IconButton(
-              tooltip: _controller.isPlaying ? 'Pausa' : 'Riprendi',
-              icon: Icon(
-                _controller.isPlaying ? Icons.pause_circle_rounded : Icons.play_circle_rounded,
-                color: AppTheme.accentAmber,
-                size: 26,
-              ),
-              onPressed: () => _controller.togglePlayPause(),
-            ),
-            const SizedBox(width: 4),
-          ],
-        ),
-        body: SafeArea(
-          child: Column(
-            children: [
-              // ── TOP HEADER CARD: Copertina, Titolo, Cantanti, Preferito (Cuore) e Spotify ──
-              _buildSongHeaderCard(isLandscape: isLandscape),
-
-              // Banner concert glow
-              if (!isLandscape || _isGlowEnabled)
-                ConcertGlowBanner(
-                  isEnabled: _isGlowEnabled,
-                  onToggle: () => setState(() => _isGlowEnabled = !_isGlowEnabled),
-                ),
-
-              const Divider(height: 1, color: Color(0xFF1E293B)),
-
-              // ── AREA CENTRALE: Lista testi con auto-scroll a 60fps ─────────────────
-              Expanded(
+        body: Stack(
+          children: [
+            // ── LIVELLO 1: Lista Testi a Schermo Intero ───────────────────────
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _toggleOverlay,
                 child: NotificationListener<ScrollNotification>(
                   onNotification: (notification) {
                     if (notification is ScrollStartNotification) {
@@ -286,9 +213,11 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                     itemPositionsListener: _positionsListener,
                     initialScrollIndex: _controller.activeLineIndex >= 0 ? _controller.activeLineIndex : 0,
                     initialAlignment: 0.35,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: isLandscape ? 28 : 18,
-                      vertical: isLandscape ? 12 : 20,
+                    padding: EdgeInsets.only(
+                      left: isLandscape ? 32 : 18,
+                      right: isLandscape ? 32 : 18,
+                      top: isLandscape ? 72 : 140,
+                      bottom: isLandscape ? 68 : 96,
                     ),
                     itemCount: widget.song.lyrics.length,
                     itemBuilder: (context, index) {
@@ -305,33 +234,385 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
                         activeWordIndex: isActive ? _controller.activeWordIndex : -1,
                         showTranslation: _showTranslation,
                         fontScale: _fontScale,
-                        onTap: () {
-                          _controller.jumpToLine(index);
-                        },
+                        onTap: _toggleOverlay, // Cliccare sul testo mostra/nasconde i menu senza alterare il brano
                       );
                     },
                   ),
                 ),
               ),
+            ),
 
-              // ── SOTTO IL TESTO: Pannello di Sincronizzazione Manuale ─────────────
-              Padding(
-                padding: EdgeInsets.only(
-                  left: 14,
-                  right: 14,
-                  bottom: isLandscape ? 6 : 12,
-                  top: 2,
-                ),
-                child: DelayAdjusterBar(
-                  offsetMs: _controller.manualPhaseOffsetMs,
-                  onAdjust: (delta) => _controller.adjustOffset(delta),
-                  onReset: () => _controller.resetOffset(),
+            // ── LIVELLO 2: Menu Superiore Flottante (Animato con Fade & Slide) ────
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                offset: _showOverlay ? Offset.zero : const Offset(0, -1.2),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 220),
+                  opacity: _showOverlay ? 1.0 : 0.0,
+                  child: IgnorePointer(
+                    ignoring: !_showOverlay,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.95),
+                              Colors.black.withValues(alpha: 0.82),
+                              Colors.transparent,
+                            ],
+                            stops: const [0.0, 0.7, 1.0],
+                          ),
+                        ),
+                        padding: EdgeInsets.fromLTRB(12, 4, 12, isLandscape ? 8 : 12),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isLandscape)
+                              _buildLandscapeUnifiedHeader()
+                            else
+                              _buildPortraitHeader(),
+                            if (_isGlowEnabled)
+                              ConcertGlowBanner(
+                                isEnabled: _isGlowEnabled,
+                                onToggle: () => setState(() => _isGlowEnabled = !_isGlowEnabled),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ],
-          ),
+            ),
+
+            // ── LIVELLO 3: Menu Inferiore Delay Flottante (Animato con Fade & Slide) ──
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                offset: _showOverlay ? Offset.zero : const Offset(0, 1.2),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 220),
+                  opacity: _showOverlay ? 1.0 : 0.0,
+                  child: IgnorePointer(
+                    ignoring: !_showOverlay,
+                    child: SafeArea(
+                      top: false,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.95),
+                              Colors.black.withValues(alpha: 0.8),
+                              Colors.transparent,
+                            ],
+                            stops: const [0.0, 0.75, 1.0],
+                          ),
+                        ),
+                        padding: EdgeInsets.only(
+                          left: 14,
+                          right: 14,
+                          bottom: isLandscape ? 6 : 12,
+                          top: 14,
+                        ),
+                        child: DelayAdjusterBar(
+                          offsetMs: _controller.manualPhaseOffsetMs,
+                          onAdjust: (delta) => _controller.adjustOffset(delta),
+                          onReset: () => _controller.resetOffset(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  /// Header orizzontale unificato: una singola riga ultra-compatta con tutti i controlli
+  Widget _buildLandscapeUnifiedHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.surface.withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF1E293B)),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black87,
+            blurRadius: 12,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Tasto Indietro
+          IconButton(
+            tooltip: 'Indietro',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: const Icon(Icons.arrow_back_rounded, color: AppTheme.textPrimary, size: 22),
+            onPressed: () => Navigator.pop(context),
+          ),
+          const SizedBox(width: 10),
+
+          // Artwork brano
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: widget.song.coverArtUrl != null && widget.song.coverArtUrl!.isNotEmpty
+                ? Image.network(
+                    widget.song.coverArtUrl!,
+                    width: 36,
+                    height: 36,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _buildArtworkPlaceholder(size: 36),
+                  )
+                : _buildArtworkPlaceholder(size: 36),
+          ),
+          const SizedBox(width: 10),
+
+          // Titolo, Cantante & Minutaggio
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.song.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.song.artist,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.timer_outlined, size: 11, color: AppTheme.accentAmber),
+                    const SizedBox(width: 3),
+                    Text(
+                      '${_formatDuration(_controller.currentPosition)} / ${_formatDuration(widget.song.duration)}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          // Traduzione ON/OFF
+          IconButton(
+            tooltip: _showTranslation ? 'Nascondi traduzione' : 'Mostra traduzione',
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            constraints: const BoxConstraints(),
+            icon: Icon(
+              Icons.translate_rounded,
+              color: _showTranslation ? AppTheme.accentCyan : AppTheme.textMuted,
+              size: 20,
+            ),
+            onPressed: () => setState(() => _showTranslation = !_showTranslation),
+          ),
+
+          // Dimensione testo
+          IconButton(
+            tooltip: 'Dimensione testo',
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            constraints: const BoxConstraints(),
+            icon: Icon(
+              _fontScale > 1.0 ? Icons.text_increase_rounded : Icons.format_size_rounded,
+              color: _fontScale > 1.0 ? AppTheme.accentAmber : AppTheme.textSecondary,
+              size: 20,
+            ),
+            onPressed: () {
+              setState(() {
+                if (_fontScale >= 1.3) {
+                  _fontScale = 0.9;
+                } else if (_fontScale >= 1.0) {
+                  _fontScale = 1.3;
+                } else {
+                  _fontScale = 1.0;
+                }
+              });
+            },
+          ),
+
+          // Rotazione Verticale / Orizzontale
+          IconButton(
+            tooltip: 'Torna in verticale',
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            constraints: const BoxConstraints(),
+            icon: const Icon(
+              Icons.screen_lock_portrait_rounded,
+              color: AppTheme.accentAmber,
+              size: 20,
+            ),
+            onPressed: _toggleOrientation,
+          ),
+
+          // Concert Glowstick Mode
+          IconButton(
+            tooltip: 'Concert Glowstick Mode',
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            constraints: const BoxConstraints(),
+            icon: Icon(
+              Icons.flare_rounded,
+              color: _isGlowEnabled ? AppTheme.accentAmber : AppTheme.textMuted,
+              size: 20,
+            ),
+            onPressed: () => setState(() => _isGlowEnabled = !_isGlowEnabled),
+          ),
+
+          // Play / Pausa
+          IconButton(
+            tooltip: _controller.isPlaying ? 'Pausa' : 'Riprendi',
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            constraints: const BoxConstraints(),
+            icon: Icon(
+              _controller.isPlaying ? Icons.pause_circle_rounded : Icons.play_circle_rounded,
+              color: AppTheme.accentAmber,
+              size: 24,
+            ),
+            onPressed: () => _controller.togglePlayPause(),
+          ),
+
+          const SizedBox(width: 4),
+
+          // Cuore (Salva nei Preferiti)
+          IconButton(
+            tooltip: _isFavorite ? 'Rimuovi dai preferiti' : 'Salva nei preferiti',
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            constraints: const BoxConstraints(),
+            icon: Icon(
+              _isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+              color: _isFavorite ? const Color(0xFFEF4444) : AppTheme.textSecondary,
+              size: 21,
+            ),
+            onPressed: _toggleFavorite,
+          ),
+
+          const SizedBox(width: 8),
+
+          // Pulsante Spotify (con logo 3D ufficiale caricato dall'utente)
+          SpotifyIconButton(
+            onTap: _openSpotify,
+            size: 32,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Header verticale standard
+  Widget _buildPortraitHeader() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded, color: AppTheme.textPrimary),
+              onPressed: () => Navigator.pop(context),
+            ),
+            const SizedBox(width: 4),
+            const Text(
+              'Live Teleprompter',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              tooltip: _showTranslation ? 'Nascondi traduzione' : 'Mostra traduzione',
+              icon: Icon(
+                Icons.translate_rounded,
+                color: _showTranslation ? AppTheme.accentCyan : AppTheme.textMuted,
+                size: 20,
+              ),
+              onPressed: () => setState(() => _showTranslation = !_showTranslation),
+            ),
+            IconButton(
+              tooltip: 'Dimensione testo',
+              icon: Icon(
+                _fontScale > 1.0 ? Icons.text_increase_rounded : Icons.format_size_rounded,
+                color: _fontScale > 1.0 ? AppTheme.accentAmber : AppTheme.textSecondary,
+                size: 20,
+              ),
+              onPressed: () {
+                setState(() {
+                  if (_fontScale >= 1.3) {
+                    _fontScale = 0.9;
+                  } else if (_fontScale >= 1.0) {
+                    _fontScale = 1.3;
+                  } else {
+                    _fontScale = 1.0;
+                  }
+                });
+              },
+            ),
+            IconButton(
+              tooltip: 'Gira lo schermo in orizzontale',
+              icon: const Icon(
+                Icons.screen_rotation_rounded,
+                color: AppTheme.textSecondary,
+                size: 22,
+              ),
+              onPressed: _toggleOrientation,
+            ),
+            IconButton(
+              tooltip: _controller.isPlaying ? 'Pausa' : 'Riprendi',
+              icon: Icon(
+                _controller.isPlaying ? Icons.pause_circle_rounded : Icons.play_circle_rounded,
+                color: AppTheme.accentAmber,
+                size: 26,
+              ),
+              onPressed: () => _controller.togglePlayPause(),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        _buildSongHeaderCard(isLandscape: false),
+      ],
     );
   }
 
@@ -444,7 +725,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
 
           const SizedBox(width: 10),
 
-          // Icona Spotify (Apre il brano direttamente su Spotify)
+          // Icona Spotify (Apre il brano direttamente su Spotify con logo 3D)
           SpotifyIconButton(
             onTap: _openSpotify,
             size: isLandscape ? 30 : 36,
