@@ -57,37 +57,25 @@ class TeleprompterLineTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Testo del verso (centrato)
-            if (isActive && line.words.isNotEmpty)
-              _buildKaraokeWordFlow(context, activeFontSize)
-            else
-              Text(
-                line.text,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: isActive
-                      ? activeFontSize
-                      : (isPast ? pastFontSize : regularFontSize),
-                  fontWeight: isActive
-                      ? FontWeight.w800
-                      : (isPast ? FontWeight.w400 : FontWeight.w600),
-                  color: isActive
-                      ? AppTheme.activeLyricGlow
-                      : (isPast ? AppTheme.textMuted : AppTheme.textSecondary),
-                  height: 1.35,
-                  letterSpacing: isActive ? 0.3 : 0.0,
-                  shadows: isActive
-                      ? [
-                          Shadow(
-                            color: AppTheme.accentAmber.withValues(alpha: 0.6),
-                            blurRadius: 18,
-                          ),
-                        ]
-                      : null,
-                ),
+            // Testo del verso: pulito, naturale, non evidenziato
+            Text(
+              line.text,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: isActive
+                    ? activeFontSize
+                    : (isPast ? pastFontSize : regularFontSize),
+                fontWeight: isActive
+                    ? FontWeight.w700
+                    : (isPast ? FontWeight.w400 : FontWeight.w600),
+                color: isActive
+                    ? AppTheme.textPrimary
+                    : (isPast ? AppTheme.textMuted : AppTheme.textSecondary),
+                height: 1.35,
               ),
+            ),
 
-            // Barra di avanzamento per il verso attivo (centrata ed elegante)
+            // Barra di avanzamento per il verso attivo (unica linea che si completa sotto al testo)
             if (isActive) ...[
               const SizedBox(height: 10),
               Center(
@@ -108,7 +96,7 @@ class TeleprompterLineTile extends StatelessWidget {
               ),
             ],
 
-            // Traduzione italiana opzionale per cantare capendo il significato (centrata)
+            // Traduzione italiana opzionale (centrata e discreta)
             if (showTranslation && line.translation != null && line.translation!.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
@@ -117,9 +105,9 @@ class TeleprompterLineTile extends StatelessWidget {
                 style: TextStyle(
                   fontSize: (isActive ? 15.0 : 13.0) * fontScale,
                   fontStyle: FontStyle.italic,
-                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                  fontWeight: isActive ? FontWeight.w500 : FontWeight.w400,
                   color: isActive
-                      ? AppTheme.accentCyan
+                      ? AppTheme.textSecondary
                       : AppTheme.textMuted.withValues(alpha: 0.8),
                   height: 1.25,
                 ),
@@ -130,36 +118,4 @@ class TeleprompterLineTile extends StatelessWidget {
       ),
     );
   }
-
-  Widget _buildKaraokeWordFlow(BuildContext context, double fontSize) {
-    return Wrap(
-      alignment: WrapAlignment.center,
-      runAlignment: WrapAlignment.center,
-      spacing: 6,
-      runSpacing: 4,
-      children: List.generate(line.words.length, (wIdx) {
-        final word = line.words[wIdx];
-        final isWordSung = wIdx <= activeWordIndex;
-        final isCurrentWord = wIdx == activeWordIndex;
-
-        return Text(
-          word.text,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.w800,
-            color: isWordSung ? AppTheme.activeLyricGlow : Colors.white54,
-            shadows: isCurrentWord
-                ? [
-                    Shadow(
-                      color: AppTheme.accentAmber.withValues(alpha: 0.9),
-                      blurRadius: 16,
-                    ),
-                  ]
-                : null,
-          ),
-        );
-      }),
-    );
-  }
 }
-
