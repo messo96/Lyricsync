@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/audio_recorder_service.dart';
 import '../theme/app_theme.dart';
 
-/// Particella sonora orbitante
+/// Particella sonora orbitante nel campo acustico
 class _SoundSpark {
   final double orbitRatio;
   final double speed;
@@ -22,7 +22,8 @@ class _SoundSpark {
 
 /// Pulsante Microfono & Visualizzatore "Fluid Sonic Nebula":
 /// Estremamente fluido (120 FPS con smoothing esponenziale a zero jitter),
-/// iper-reattivo ai transienti sonori e con lente centrale in vetro olografico.
+/// iper-reattivo a qualsiasi suono (voci, melodie, accordi, percussioni e bassi)
+/// con equalizzatore cinetico integrato e lente centrale in vetro olografico.
 class PulsingWaveform extends StatefulWidget {
   final bool isListening;
   final ValueNotifier<double>? amplitudeNotifier;
@@ -53,13 +54,13 @@ class _PulsingWaveformState extends State<PulsingWaveform>
 
   // Variabili di interpolazione per fluidità a 60/120 FPS senza scatti
   double _smoothVolume = 0.0;
-  double _smoothBass = 0.0;
-  double _kickIntensity = 0.0;
+  double _smoothTransient = 0.0;
 
   double _targetVolume = 0.0;
-  double _targetBass = 0.0;
-  bool _kickTriggered = false;
+  double _targetTransient = 0.0;
+  bool _transientTriggered = false;
   double _currentDb = -60.0;
+  bool _isSoundActive = false;
 
   // 18 scintille sonore con orbite armoniche
   static final List<_SoundSpark> _sparks = List.generate(18, (i) {
@@ -108,11 +109,15 @@ class _PulsingWaveformState extends State<PulsingWaveform>
   void _onAcousticUpdate() {
     final state = widget.acousticNotifier?.value;
     if (state != null) {
-      _targetVolume = state.normalized.clamp(0.0, 1.0);
-      _targetBass = state.bassIntensity.clamp(0.0, 1.0);
+      _targetVolume = state.soundIntensity.clamp(0.0, 1.0);
+      _targetTransient = (state.transientIntensity > 0
+              ? state.transientIntensity
+              : (state.isTransientHit ? 0.7 : 0.0))
+          .clamp(0.0, 1.0);
       _currentDb = state.currentDb;
-      if (state.isBassHit) {
-        _kickTriggered = true;
+      _isSoundActive = state.isSoundActive;
+      if (state.isTransientHit || state.isBassHit) {
+        _transientTriggered = true;
       }
     }
   }
@@ -120,10 +125,10 @@ class _PulsingWaveformState extends State<PulsingWaveform>
   void _onAmplitudeUpdate() {
     final amp = widget.amplitudeNotifier?.value ?? -60.0;
     _currentDb = amp;
-    final norm = ((amp + 60.0) / 60.0).clamp(0.0, 1.0);
-    _targetVolume = norm;
-    _targetBass = norm * 0.6;
-    if (norm > 0.45) _kickTriggered = true;
+    final norm = ((amp + 48.0) / 36.0).clamp(0.0, 1.0);
+    _targetVolume = math.pow(norm, 1.1).toDouble();
+    _isSoundActive = amp > -45.0;
+    if (norm > 0.4) _transientTriggered = true;
   }
 
   @override
@@ -141,25 +146,28 @@ class _PulsingWaveformState extends State<PulsingWaveform>
     return AnimatedBuilder(
       animation: _ticker,
       builder: (context, _) {
-        // Smoothing esponenziale dinamico: attacco rapido (<16ms) e decadimento setoso
-        final attackNorm = _targetVolume > _smoothVolume ? 0.32 : 0.12;
-        _smoothVolume += (_targetVolume - _smoothVolume) * attackNorm;
+        // Smoothing esponenziale dinamico: reattività immediata a qualsiasi suono
+        final attackVolume = _targetVolume > _smoothVolume ? 0.36 : 0.14;
+        _smoothVolume += (_targetVolume - _smoothVolume) * attackVolume;
 
-        final attackBass = _targetBass > _smoothBass ? 0.38 : 0.15;
-        _smoothBass += (_targetBass - _smoothBass) * attackBass;
+        final attackTransient = _targetTransient > _smoothTransient ? 0.45 : 0.18;
+        _smoothTransient += (_targetTransient - _smoothTransient) * attackTransient;
 
-        if (_kickTriggered) {
-          _kickIntensity = 1.0;
-          _kickTriggered = false;
+        if (_transientTriggered) {
+          _smoothTransient = 1.0;
+          _transientTriggered = false;
         } else {
-          _kickIntensity *= 0.88; // Decadimento morbido a 60/120Hz
+          _smoothTransient *= 0.86; // Decadimento morbido a 60/120Hz
         }
 
         final phase = _ticker.value * 2 * math.pi;
 
-        // Rinculo elastico fisico della lente su transienti di cassa
+        // Livello sonoro complessivo combinato per la modulazione estetica
+        final soundActivity = (_smoothVolume * 0.75 + _smoothTransient * 0.35).clamp(0.0, 1.0);
+
+        // Espansione e respiro reattivo del pulsante centrale a OGNI suono
         final membraneThump = widget.isListening
-            ? 1.0 + (_kickIntensity * 0.15) + (_smoothVolume * 0.05)
+            ? 1.0 + (_smoothVolume * 0.15) + (_smoothTransient * 0.10)
             : (1.0 + math.sin(phase) * 0.025);
 
         return Column(
@@ -172,14 +180,13 @@ class _PulsingWaveformState extends State<PulsingWaveform>
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  // 1. Rendering GPU ad alta efficienza: Onde fluide, aloni e pulviscolo
+                  // 1. Rendering GPU ad alta efficienza: Onde fluide reattive a ogni suono
                   CustomPaint(
                     size: Size(radarSize, radarSize),
                     painter: _FluidSonicPainter(
                       phase: phase,
                       volume: _smoothVolume,
-                      bass: _smoothBass,
-                      kick: _kickIntensity,
+                      transient: _smoothTransient,
                       isListening: widget.isListening,
                       sparks: _sparks,
                     ),
@@ -197,17 +204,19 @@ class _PulsingWaveformState extends State<PulsingWaveform>
                           center: const Alignment(-0.35, -0.38),
                           radius: 0.9,
                           colors: widget.isListening
-                              ? (_kickIntensity > 0.4
-                                  ? const [
-                                      Color(0xFF34D399),
-                                      Color(0xFF0D9488),
-                                      Color(0xFF041D1D),
-                                    ]
-                                  : const [
-                                      Color(0xFF2DD4BF),
-                                      Color(0xFF0F766E),
-                                      Color(0xFF071B26),
-                                    ])
+                              ? [
+                                  Color.lerp(
+                                    const Color(0xFF2DD4BF),
+                                    const Color(0xFF34D399),
+                                    soundActivity,
+                                  )!,
+                                  Color.lerp(
+                                    const Color(0xFF0F766E),
+                                    const Color(0xFF0D9488),
+                                    soundActivity,
+                                  )!,
+                                  const Color(0xFF041D1D),
+                                ]
                               : const [
                                   Color(0xFF1E293B),
                                   Color(0xFF0F172A),
@@ -217,21 +226,25 @@ class _PulsingWaveformState extends State<PulsingWaveform>
                         ),
                         border: Border.all(
                           color: widget.isListening
-                              ? (_kickIntensity > 0.3
-                                  ? AppTheme.accentGold.withValues(alpha: 0.95)
-                                  : AppTheme.accentMint.withValues(alpha: 0.75))
+                              ? Color.lerp(
+                                  AppTheme.accentMint.withValues(alpha: 0.75),
+                                  AppTheme.accentGold.withValues(alpha: 0.95),
+                                  soundActivity,
+                                )!
                               : const Color(0xFF334155),
-                          width: (_kickIntensity > 0.3 ? 2.4 : 1.8) * scale,
+                          width: (1.8 + soundActivity * 0.8) * scale,
                         ),
                         boxShadow: [
                           BoxShadow(
                             color: widget.isListening
-                                ? (_kickIntensity > 0.3
-                                    ? AppTheme.accentGold.withValues(alpha: 0.55)
-                                    : AppTheme.accentMint.withValues(alpha: 0.4))
+                                ? Color.lerp(
+                                    AppTheme.accentMint.withValues(alpha: 0.35 + soundActivity * 0.25),
+                                    AppTheme.accentGold.withValues(alpha: 0.6),
+                                    soundActivity,
+                                  )!
                                 : Colors.black45,
-                            blurRadius: (_kickIntensity > 0.3 ? 32 : (widget.isListening ? 22 : 10)) * scale,
-                            spreadRadius: (_kickIntensity > 0.3 ? 3 : (widget.isListening ? 1.5 : 0)) * scale,
+                            blurRadius: (14.0 + soundActivity * 22.0) * scale,
+                            spreadRadius: (1.0 + soundActivity * 3.0) * scale,
                           ),
                         ],
                       ),
@@ -259,14 +272,13 @@ class _PulsingWaveformState extends State<PulsingWaveform>
                             ),
                           ),
 
-                          // Equalizzatore fluido cinetico a 5 barre dipinto direttamente a GPU
+                          // Equalizzatore fluido cinetico a 5 bande: danza con ogni frequenza sonora
                           if (widget.isListening)
                             CustomPaint(
                               size: Size(54 * scale, 38 * scale),
                               painter: _CoreEqualizerPainter(
                                 volume: _smoothVolume,
-                                bass: _smoothBass,
-                                kick: _kickIntensity,
+                                transient: _smoothTransient,
                                 phase: phase,
                               ),
                             )
@@ -286,43 +298,58 @@ class _PulsingWaveformState extends State<PulsingWaveform>
 
             if (widget.showBadge && widget.isListening) ...[
               const SizedBox(height: 10),
-              // Badge di feedback acustico in tempo reale
-              Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: _kickIntensity > 0.35
-                      ? AppTheme.accentGold.withValues(alpha: 0.15)
-                      : AppTheme.surfaceLight,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: _kickIntensity > 0.35
-                        ? AppTheme.accentGold.withValues(alpha: 0.5)
-                        : AppTheme.border,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _kickIntensity > 0.35 ? Icons.speaker_rounded : Icons.graphic_eq_rounded,
-                      size: 12,
-                      color: _kickIntensity > 0.35 ? AppTheme.accentGold : AppTheme.accentMint,
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      _kickIntensity > 0.35
-                          ? 'BASSI DETECTED · ${_currentDb.toStringAsFixed(0)} dB'
-                          : 'AUDIO ATTIVO · ${_currentDb.toStringAsFixed(0)} dB',
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.4,
-                        color: _kickIntensity > 0.35 ? AppTheme.accentGold : AppTheme.accentMint,
+              // Badge di feedback acustico in tempo reale per qualsiasi suono
+              Builder(
+                builder: (context) {
+                  final isLively = soundActivity > 0.35;
+                  final isDetected = _isSoundActive || _smoothVolume > 0.12;
+
+                  final label = isDetected
+                      ? (_smoothTransient > 0.4
+                          ? 'DINAMICA / RITMO · ${_currentDb.toStringAsFixed(0)} dB'
+                          : 'SUONO RILEVATO · ${_currentDb.toStringAsFixed(0)} dB')
+                      : 'IN ASCOLTO · ${_currentDb.toStringAsFixed(0)} dB';
+
+                  final badgeColor = isLively
+                      ? AppTheme.accentGold
+                      : (isDetected ? AppTheme.accentMint : AppTheme.textMuted);
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: isLively
+                          ? AppTheme.accentGold.withValues(alpha: 0.15)
+                          : AppTheme.surfaceLight,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isLively
+                            ? AppTheme.accentGold.withValues(alpha: 0.5)
+                            : AppTheme.border,
                       ),
                     ),
-                  ],
-                ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isDetected ? Icons.graphic_eq_rounded : Icons.mic_rounded,
+                          size: 12,
+                          color: badgeColor,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                            color: badgeColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             ],
 
@@ -350,46 +377,41 @@ class _PulsingWaveformState extends State<PulsingWaveform>
   }
 }
 
-/// Disegna l'equalizzatore a barre fluide all'interno della lente di vetro
+/// Disegna l'equalizzatore a 5 barre fluide all'interno della lente, animato da qualsiasi suono rilevato
 class _CoreEqualizerPainter extends CustomPainter {
   final double volume;
-  final double bass;
-  final double kick;
+  final double transient;
   final double phase;
 
   _CoreEqualizerPainter({
     required this.volume,
-    required this.bass,
-    required this.kick,
+    required this.transient,
     required this.phase,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     const int barCount = 5;
-    final barWidth = size.width / (barCount * 1.8);
-    final gap = barWidth * 0.8;
+    final barWidth = size.width / (barCount * 1.85);
+    final gap = barWidth * 0.75;
     final totalWidth = (barCount * barWidth) + ((barCount - 1) * gap);
     final startX = (size.width - totalWidth) / 2;
 
-    final paintDark = Paint()
-      ..color = const Color(0xFF03101C)
-      ..style = PaintingStyle.fill;
-
-    final paintKick = Paint()
-      ..color = const Color(0xFFFDE68A)
-      ..style = PaintingStyle.fill;
-
     for (int i = 0; i < barCount; i++) {
-      // Modulazione organica per ciascuna banda di frequenza
-      final harmonic = math.sin(phase * 1.5 + (i * 0.7)).abs() * 0.25;
-      final ratio = switch (i) {
-        0 => (0.35 + volume * 0.45 + harmonic),
-        1 => (0.55 + bass * 0.45 + harmonic),
-        2 => (0.75 + (kick * 0.35) + volume * 0.2 + harmonic),
-        3 => (0.55 + bass * 0.45 + harmonic),
-        _ => (0.35 + volume * 0.45 + harmonic),
-      }.clamp(0.2, 1.0);
+      // Ciascuna barra risponde armonicamente alla presenza di suono/voce/strumenti
+      final harmonic = math.sin(phase * 2.2 + (i * 1.15)).abs() * (0.08 + volume * 0.26);
+      final bandWeight = switch (i) {
+        0 => 0.85, // Bassi / ritmica
+        1 => 1.05, // Medi bassi (chitarre / corpo musicale)
+        2 => 1.25, // Voce / melodia solista (barra centrale prominente)
+        3 => 1.05, // Medi alti (presenza vocale / ottoni)
+        _ => 0.85, // Alti / brillantezza
+      };
+
+      // In assenza di suono, le barre restano in elegante riposo compatto (~15%)
+      final baseRest = 0.14 + (math.sin(phase + i) * 0.02);
+      final soundRaise = (volume * bandWeight * 0.66) + (transient * 0.22 * (i == 2 ? 1.0 : 0.7));
+      final ratio = (baseRest + soundRaise + harmonic).clamp(0.12, 1.0);
 
       final barH = size.height * ratio;
       final x = startX + i * (barWidth + gap);
@@ -400,8 +422,18 @@ class _CoreEqualizerPainter extends CustomPainter {
         Radius.circular(barWidth / 2),
       );
 
-      final useKickGlow = kick > 0.4 && (i == 1 || i == 2 || i == 3);
-      canvas.drawRRect(rect, useKickGlow ? paintKick : paintDark);
+      final barActivity = (volume * 0.75 + transient * 0.35).clamp(0.0, 1.0);
+      final barColor = Color.lerp(
+        const Color(0xFF03101C),
+        (i == 2 ? const Color(0xFFFDE68A) : const Color(0xFF2DD4BF)),
+        (0.25 + barActivity * 0.75).clamp(0.0, 1.0),
+      )!;
+
+      final paint = Paint()
+        ..color = barColor
+        ..style = PaintingStyle.fill;
+
+      canvas.drawRRect(rect, paint);
     }
   }
 
@@ -413,16 +445,14 @@ class _CoreEqualizerPainter extends CustomPainter {
 class _FluidSonicPainter extends CustomPainter {
   final double phase;
   final double volume;
-  final double bass;
-  final double kick;
+  final double transient;
   final bool isListening;
   final List<_SoundSpark> sparks;
 
   _FluidSonicPainter({
     required this.phase,
     required this.volume,
-    required this.bass,
-    required this.kick,
+    required this.transient,
     required this.isListening,
     required this.sparks,
   });
@@ -449,62 +479,64 @@ class _FluidSonicPainter extends CustomPainter {
       return;
     }
 
-    // ── 1. Alone Magnetico di Sfondo ─────────────────────────────────────────
-    final auraR = (74.0 + volume * 30.0 + (kick * 16.0)) * scale;
+    // ── 1. Alone Magnetico di Sfondo che respira col volume sonoro ────────────
+    final auraR = (72.0 + volume * 36.0 + (transient * 16.0)) * scale;
     final auraPaint = Paint()
-      ..color = (kick > 0.35 ? AppTheme.accentGold : AppTheme.accentMint)
-          .withValues(alpha: (0.16 + volume * 0.14).clamp(0.0, 0.4))
+      ..color = (transient > 0.4 ? AppTheme.accentGold : AppTheme.accentMint)
+          .withValues(alpha: (0.14 + volume * 0.22).clamp(0.0, 0.45))
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, 18 * scale);
     canvas.drawCircle(center, auraR, auraPaint);
 
-    // ── 2. Onda Shockwave sui Kick Transients ────────────────────────────────
-    if (kick > 0.08) {
-      final shockR = (68.0 + (1.0 - kick) * 52.0) * scale;
-      final shockAlpha = (kick * 0.65).clamp(0.0, 1.0);
+    // ── 2. Onda Shockwave sui Picchi Sonori e Dinamici ────────────────────────
+    if (transient > 0.06 || volume > 0.45) {
+      final intensity = math.max(transient, volume * 0.7);
+      final shockR = (66.0 + (1.0 - intensity) * 54.0) * scale;
+      final shockAlpha = (intensity * 0.65).clamp(0.0, 0.95);
       final shockPaint = Paint()
-        ..color = AppTheme.accentGold.withValues(alpha: shockAlpha)
+        ..color = (transient > 0.35 ? AppTheme.accentGold : AppTheme.accentMint)
+            .withValues(alpha: shockAlpha)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.8 * scale;
       canvas.drawCircle(center, shockR.clamp(0.0, maxR), shockPaint);
     }
 
-    // ── 3. Onda Fluida Esterna Armonica (Menta Liquida) ───────────────────────
+    // ── 3. Onda Fluida Esterna Armonica (Menta Liquida Reattiva al Suono) ──────
     _drawSmoothFluidWave(
       canvas: canvas,
       center: center,
-      baseRadius: 86.0 * scale,
-      amp1: (5.0 + volume * 14.0) * scale,
-      amp2: (3.5 + bass * 8.0) * scale,
+      baseRadius: (82.0 + volume * 10.0) * scale,
+      amp1: (4.5 + volume * 18.0) * scale,
+      amp2: (3.0 + volume * 12.0 + transient * 6.0) * scale,
       harmonics1: 3,
       harmonics2: 5,
       phaseOffset: phase,
-      strokeColor: AppTheme.accentMint.withValues(alpha: 0.6 + volume * 0.35),
-      fillColor: AppTheme.accentMint.withValues(alpha: 0.04 + volume * 0.06),
+      strokeColor: AppTheme.accentMint.withValues(alpha: 0.55 + volume * 0.4),
+      fillColor: AppTheme.accentMint.withValues(alpha: 0.03 + volume * 0.07),
       strokeWidth: 2.0 * scale,
       maxR: maxR,
     );
 
-    // ── 4. Onda Fluida Interna dei Bassi (Oro Caldo Reattivo) ─────────────────
+    // ── 4. Onda Fluida Interna Dinamica (Oro Caldo / Turchese) ────────────────
     _drawSmoothFluidWave(
       canvas: canvas,
       center: center,
-      baseRadius: 72.0 * scale,
-      amp1: (4.0 + bass * 15.0) * scale,
-      amp2: (3.0 + kick * 14.0) * scale,
+      baseRadius: (70.0 + volume * 6.0) * scale,
+      amp1: (3.5 + volume * 15.0) * scale,
+      amp2: (2.5 + transient * 14.0) * scale,
       harmonics1: 4,
       harmonics2: 2,
       phaseOffset: -phase * 1.25,
-      strokeColor: kick > 0.3
+      strokeColor: transient > 0.35
           ? AppTheme.accentGold.withValues(alpha: 0.95)
-          : AppTheme.accentGold.withValues(alpha: 0.45 + bass * 0.4),
-      fillColor: kick > 0.3
+          : AppTheme.accentGold.withValues(alpha: 0.35 + volume * 0.5),
+      fillColor: transient > 0.35
           ? AppTheme.accentGold.withValues(alpha: 0.12)
           : AppTheme.accentGold.withValues(alpha: 0.03),
-      strokeWidth: (kick > 0.3 ? 2.5 : 1.5) * scale,
+      strokeWidth: (transient > 0.35 ? 2.5 : 1.5) * scale,
       maxR: maxR,
     );
 
-    // ── 5. Scintille Quantiche Sonore Orbitanti ──────────────────────────────
+    // ── 5. Scintille Quantiche Sonore Orbitanti con Velocità Dinamica ──────────
     final sparkMint = Paint()
       ..color = AppTheme.accentMint.withValues(alpha: 0.85)
       ..style = PaintingStyle.fill;
@@ -514,12 +546,13 @@ class _FluidSonicPainter extends CustomPainter {
       ..style = PaintingStyle.fill;
 
     for (final s in sparks) {
-      final angle = s.angleOffset + (phase * s.speed);
-      final r = (s.orbitRatio * 94.0 * scale) + (volume * 20.0 * scale) + (kick * 10.0 * scale);
+      final speedBoost = 1.0 + (volume * 1.2);
+      final angle = s.angleOffset + (phase * s.speed * speedBoost);
+      final r = (s.orbitRatio * 92.0 * scale) + (volume * 24.0 * scale) + (transient * 10.0 * scale);
       final px = center.dx + math.cos(angle) * r;
       final py = center.dy + math.sin(angle) * r;
 
-      final sSize = (s.size * scale * (kick > 0.3 ? 1.4 : (1.0 + volume * 0.3))).clamp(1.2, 4.5);
+      final sSize = (s.size * scale * (1.0 + volume * 0.5 + transient * 0.3)).clamp(1.2, 4.6);
       canvas.drawCircle(Offset(px, py), sSize, s.isGold ? sparkGold : sparkMint);
     }
   }

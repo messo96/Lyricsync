@@ -1,20 +1,30 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
-/// Rappresenta lo stato acustico istantaneo rilevato dal microfono (decibel, bassi, ampiezza)
+/// Rappresenta lo stato acustico istantaneo rilevato dal microfono:
+/// volume effettivo, intensità percettiva, transienti vocali/musicali e spettro
 class AcousticState {
-  final double currentDb;      // Range [-60.0, 0.0] dB
-  final double normalized;     // Range [0.0, 1.0] ampiezza normalizzata
-  final bool isBassHit;        // Rilevamento colpo di cassa / transiente percussivo
-  final double bassIntensity;  // Range [0.0, 1.0] intensità dell'onda di basso
-  final double averageEnergy;  // Range [0.0, 1.0] energia media d'ambiente
+  final double currentDb;           // Range [-60.0, 0.0] dB
+  final double normalized;          // Range [0.0, 1.0] ampiezza normalizzata
+  final double soundIntensity;      // Range [0.0, 1.0] intensità sonora percettiva reattiva a qualsiasi suono
+  final bool isSoundActive;         // Suono rilevato chiaramente sopra il rumore di fondo
+  final bool isTransientHit;        // Attacco sonoro/musicale dinamico (voce, cassa, accordo, rullante)
+  final double transientIntensity;  // Range [0.0, 1.0] intensità del transiente
+  final bool isBassHit;             // Retrocompatibilità per transienti a bassa frequenza
+  final double bassIntensity;       // Retrocompatibilità intensità bassi
+  final double averageEnergy;       // Range [0.0, 1.0] energia media d'ambiente
 
   const AcousticState({
     this.currentDb = -60.0,
     this.normalized = 0.0,
+    this.soundIntensity = 0.0,
+    this.isSoundActive = false,
+    this.isTransientHit = false,
+    this.transientIntensity = 0.0,
     this.isBassHit = false,
     this.bassIntensity = 0.0,
     this.averageEnergy = 0.0,
@@ -96,28 +106,44 @@ class AudioRecorderService {
     _lastDb = -60.0;
     _runningAvgDb = -50.0;
 
-    // Monitoraggio acustico ad alta frequenza (~28 FPS) per intercettare i colpi di cassa (kick drum/bassi)
+    // Monitoraggio acustico ad alta frequenza (~28-35 FPS) per intercettare qualsiasi suono, voce e musica
     _amplitudeSubscription?.cancel();
     _amplitudeSubscription = _recorder
-        .onAmplitudeChanged(const Duration(milliseconds: 35))
+        .onAmplitudeChanged(const Duration(milliseconds: 30))
         .listen((amp) {
-      final db = amp.current.clamp(-60.0, 0.0);
-      final normalized = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+      final db = amp.current.isFinite ? amp.current.clamp(-60.0, 0.0) : -60.0;
 
-      // Rilevamento transiente di basso / colpo di cassa (brusco incremento di dB)
+      // Normalizzazione dinamica calibrata:
+      // Consideriamo -48 dB come soglia di silenzio d'ambiente.
+      // Da -48 dB a -12 dB copre l'intera gamma espressiva di voci e musica reale.
+      final rawNorm = ((db + 48.0) / 36.0).clamp(0.0, 1.0);
+      // Risposta acustica percettiva (legge esponenziale) per rendere l'animazione ultra-reattiva ad ogni sfumatura di suono
+      final soundIntensity = math.pow(rawNorm, 1.1).toDouble().clamp(0.0, 1.0);
+
+      // Transiente sonoro dinamico: cattura qualsiasi attacco improvviso (voce acuta, accordo, percussione, cassa, rullante)
       final delta = db - _lastDb;
-      final isBassHit = delta > 2.4 && db > -46.0;
-      final bassIntensity = isBassHit ? (delta / 6.0).clamp(0.3, 1.0) : (normalized * 0.4);
+      final isTransientHit = delta > 1.8 && db > -45.0;
+      final transientIntensity = isTransientHit ? (delta / 5.0).clamp(0.25, 1.0) : 0.0;
+
+      // Rilevamento specifico dei colpi di cassa / bassi per retrocompatibilità
+      final isBassHit = delta > 2.5 && db > -44.0;
+      final bassIntensity = isBassHit ? (delta / 5.5).clamp(0.3, 1.0) : (soundIntensity * 0.5);
+
+      final isSoundActive = db > -45.0;
 
       _runningAvgDb = 0.85 * _runningAvgDb + 0.15 * db;
       _lastDb = db;
 
       final state = AcousticState(
         currentDb: db,
-        normalized: normalized,
+        normalized: soundIntensity,
+        soundIntensity: soundIntensity,
+        isSoundActive: isSoundActive,
+        isTransientHit: isTransientHit,
+        transientIntensity: transientIntensity,
         isBassHit: isBassHit,
         bassIntensity: bassIntensity,
-        averageEnergy: ((_runningAvgDb + 60.0) / 60.0).clamp(0.0, 1.0),
+        averageEnergy: ((_runningAvgDb + 48.0) / 36.0).clamp(0.0, 1.0),
       );
 
       acousticNotifier.value = state;
