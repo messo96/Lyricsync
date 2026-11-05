@@ -67,12 +67,27 @@ class AudioRecorderService {
     final samplePath = '${tempDir.path}/live_concert_sample_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
     // Configurazione mono a 44.1 kHz per massimizzare la precisione del fingerprint acustico di AudD
+    // audioInterruption: none evita di sottrarre il focus audio alle altre app di musica (Spotify, YouTube Music, ecc.)
     await _recorder.start(
       RecordConfig(
         encoder: AudioEncoder.aacLc,
         bitRate: bitRate,
         sampleRate: 44100,
         numChannels: 1, // Mono: evita cancellazioni di fase acustica e massimizza i picchi armonici
+        audioInterruption: AudioInterruptionMode.none,
+        androidConfig: const AndroidRecordConfig(
+          manageBluetooth: false, // Non attiva SCO bluetooth, preservando la riproduzione A2DP
+          muteAudio: false,       // Non silenzia i flussi audio di sistema/musica
+          audioSource: AndroidAudioSource.mic,
+          audioManagerMode: AudioManagerMode.modeNormal,
+        ),
+        iosConfig: const IosRecordConfig(
+          categoryOptions: [
+            IosAudioCategoryOption.mixWithOthers,
+            IosAudioCategoryOption.allowBluetooth,
+            IosAudioCategoryOption.defaultToSpeaker,
+          ],
+        ),
       ),
       path: samplePath,
     );
