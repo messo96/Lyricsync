@@ -1,29 +1,35 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import '../services/audio_recorder_service.dart';
 import '../theme/app_theme.dart';
 
-/// Particella sonora orbitante nel campo acustico
-class _SoundSpark {
-  final double orbitRatio;
-  final double speed;
-  final double angleOffset;
-  final double size;
-  final bool isGold;
+/// Configurazione di ogni petalo di seta liquida 3D (stile Siri / Shazam Morph)
+class _SilkPetalSpec {
+  final Color primaryColor;
+  final Color secondaryColor;
+  final double speedMultiplier;
+  final double phaseOffset;
+  final int lobeCount;
+  final double baseScale;
 
-  const _SoundSpark({
-    required this.orbitRatio,
-    required this.speed,
-    required this.angleOffset,
-    required this.size,
-    required this.isGold,
+  const _SilkPetalSpec({
+    required this.primaryColor,
+    required this.secondaryColor,
+    required this.speedMultiplier,
+    required this.phaseOffset,
+    required this.lobeCount,
+    required this.baseScale,
   });
 }
 
-/// Pulsante Microfono & Visualizzatore "Fluid Sonic Nebula":
-/// Estremamente fluido (120 FPS con smoothing esponenziale a zero jitter),
-/// iper-reattivo a qualsiasi suono (voci, melodie, accordi, percussioni e bassi)
-/// con equalizzatore cinetico integrato e lente centrale in vetro olografico.
+/// Nuova Animazione Pulsante Microfono "Siri / Shazam Liquid Silk & Sonic Ripples":
+/// Completamente diversa dall'equalizzatore a barre:
+/// 1. L'icona del microfono resta sempre al centro, levitando e pulsando in 3D col battito.
+/// 2. 4 Petali di Seta Liquida Translucent (Ciano, Indaco, Oro, Corallo) si aprono e ruotano
+///    morbidezza 120 FPS attorno al pulsante centrale quando ascolta.
+/// 3. Anelli d'onda d'urto concentrici perfetti (stile Shazam) si espandono verso l'esterno
+///    accompagnati da una scia radar a cometa.
 class PulsingWaveform extends StatefulWidget {
   final bool isListening;
   final ValueNotifier<double>? amplitudeNotifier;
@@ -50,39 +56,66 @@ class PulsingWaveform extends StatefulWidget {
 
 class _PulsingWaveformState extends State<PulsingWaveform>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _ticker;
+  late final Ticker _ticker;
+  Duration _lastElapsed = Duration.zero;
 
-  // Variabili di interpolazione per fluidità a 60/120 FPS senza scatti
+  // Fasi continue accumulate con delta-time (dt) per fluidità assoluta a 120 FPS
+  double _time = 0.0;
+  double _flowPhase = 0.0;
+  double _pulseCycle = 0.0;
+
   double _smoothVolume = 0.0;
   double _smoothTransient = 0.0;
+  double _listeningBlend = 0.0;
 
   double _targetVolume = 0.0;
   double _targetTransient = 0.0;
-  bool _transientTriggered = false;
+  bool _transientImpulse = false;
   double _currentDb = -60.0;
   bool _isSoundActive = false;
+  DateTime _lastAudioEventAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  // 18 scintille sonore con orbite armoniche
-  static final List<_SoundSpark> _sparks = List.generate(18, (i) {
-    final rng = math.Random(i * 3571 + 97);
-    return _SoundSpark(
-      orbitRatio: 0.62 + (rng.nextDouble() * 0.32),
-      speed: (rng.nextBool() ? 1.0 : -1.0) * (0.5 + rng.nextDouble() * 0.8),
-      angleOffset: rng.nextDouble() * 2 * math.pi,
-      size: 1.6 + rng.nextDouble() * 1.8,
-      isGold: rng.nextDouble() > 0.5,
-    );
-  });
+  static const List<_SilkPetalSpec> _petals = [
+    _SilkPetalSpec(
+      primaryColor: Color(0xFF00F5D4),
+      secondaryColor: Color(0xFF0EA5E9),
+      speedMultiplier: 1.15,
+      phaseOffset: 0.0,
+      lobeCount: 3,
+      baseScale: 1.04,
+    ),
+    _SilkPetalSpec(
+      primaryColor: Color(0xFF6366F1),
+      secondaryColor: Color(0xFFA855F7),
+      speedMultiplier: -0.92,
+      phaseOffset: 1.57,
+      lobeCount: 3,
+      baseScale: 1.00,
+    ),
+    _SilkPetalSpec(
+      primaryColor: Color(0xFFF59E0B),
+      secondaryColor: Color(0xFFF43F5E),
+      speedMultiplier: 1.38,
+      phaseOffset: 3.14,
+      lobeCount: 2,
+      baseScale: 0.96,
+    ),
+    _SilkPetalSpec(
+      primaryColor: Color(0xFF2DD4BF),
+      secondaryColor: Color(0xFF38BDF8),
+      speedMultiplier: -1.24,
+      phaseOffset: 4.71,
+      lobeCount: 4,
+      baseScale: 0.92,
+    ),
+  ];
 
   @override
   void initState() {
     super.initState();
-    _ticker = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 4),
-    )..repeat();
-
+    _listeningBlend = widget.isListening ? 1.0 : 0.0;
     _setupListeners();
+    _ticker = createTicker(_onTick)..start();
   }
 
   void _setupListeners() {
@@ -104,31 +137,88 @@ class _PulsingWaveformState extends State<PulsingWaveform>
       oldWidget.amplitudeNotifier?.removeListener(_onAmplitudeUpdate);
       _setupListeners();
     }
+    if (!oldWidget.isListening && widget.isListening) {
+      _transientImpulse = true;
+      _smoothTransient = 0.9;
+    }
   }
 
   void _onAcousticUpdate() {
     final state = widget.acousticNotifier?.value;
     if (state != null) {
+      _lastAudioEventAt = DateTime.now();
       _targetVolume = state.soundIntensity.clamp(0.0, 1.0);
       _targetTransient = (state.transientIntensity > 0
               ? state.transientIntensity
-              : (state.isTransientHit ? 0.7 : 0.0))
+              : (state.isTransientHit ? 0.8 : 0.0))
           .clamp(0.0, 1.0);
       _currentDb = state.currentDb;
       _isSoundActive = state.isSoundActive;
       if (state.isTransientHit || state.isBassHit) {
-        _transientTriggered = true;
+        _transientImpulse = true;
       }
     }
   }
 
   void _onAmplitudeUpdate() {
     final amp = widget.amplitudeNotifier?.value ?? -60.0;
+    _lastAudioEventAt = DateTime.now();
     _currentDb = amp;
     final norm = ((amp + 48.0) / 36.0).clamp(0.0, 1.0);
-    _targetVolume = math.pow(norm, 1.1).toDouble();
+    _targetVolume = math.pow(norm, 1.08).toDouble();
     _isSoundActive = amp > -45.0;
-    if (norm > 0.4) _transientTriggered = true;
+    if (norm > 0.38) _transientImpulse = true;
+  }
+
+  void _onTick(Duration elapsed) {
+    final rawDt = (_lastElapsed == Duration.zero)
+        ? 0.016
+        : (elapsed - _lastElapsed).inMicroseconds / 1000000.0;
+    _lastElapsed = elapsed;
+
+    final dt = rawDt.clamp(0.001, 0.050);
+
+    final targetBlend = widget.isListening ? 1.0 : 0.0;
+    _listeningBlend += (targetBlend - _listeningBlend) * (1.0 - math.exp(-dt * 8.5));
+
+    final msSinceAudio = DateTime.now().difference(_lastAudioEventAt).inMilliseconds;
+    double effectiveVol = _targetVolume;
+    double effectiveTrans = _targetTransient;
+
+    if (widget.isListening) {
+      // Battito cardiaco musicale fluido anche durante il silenzio o l'invio di rete
+      final syntheticBeat = math.pow(math.max(0.0, math.sin(_time * 3.8)), 4).toDouble();
+      final breathWave = 0.28 + 0.16 * math.sin(_time * 2.1) + syntheticBeat * 0.26;
+      if (msSinceAudio > 140 || effectiveVol < 0.20) {
+        effectiveVol = math.max(effectiveVol, breathWave.clamp(0.20, 0.68));
+      }
+      if (msSinceAudio > 200 && syntheticBeat > 0.72) {
+        effectiveTrans = math.max(effectiveTrans, 0.55);
+      }
+    } else {
+      effectiveVol = 0.0;
+      effectiveTrans = 0.0;
+    }
+
+    final volRate = effectiveVol > _smoothVolume ? 16.0 : 6.5;
+    _smoothVolume += (effectiveVol - _smoothVolume) * (1.0 - math.exp(-dt * volRate));
+
+    if (_transientImpulse) {
+      _smoothTransient = math.max(_smoothTransient, 0.95);
+      _transientImpulse = false;
+    } else {
+      final transRate = effectiveTrans > _smoothTransient ? 20.0 : 7.5;
+      _smoothTransient += (effectiveTrans - _smoothTransient) * (1.0 - math.exp(-dt * transRate));
+    }
+
+    final speedFactor = 1.0 + (_smoothVolume * 1.85) + (_smoothTransient * 1.25);
+    _time += dt;
+    _flowPhase += dt * 1.9 * (0.35 + 0.65 * _listeningBlend) * speedFactor;
+    _pulseCycle += dt * (0.58 + _smoothVolume * 0.75 + _smoothTransient * 0.50);
+
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -140,446 +230,304 @@ class _PulsingWaveformState extends State<PulsingWaveform>
 
   @override
   Widget build(BuildContext context) {
-    final radarSize = widget.size ?? 260.0;
-    final scale = radarSize / 260.0;
+    final canvasSize = widget.size ?? 276.0;
+    final scale = canvasSize / 276.0;
 
-    return AnimatedBuilder(
-      animation: _ticker,
-      builder: (context, _) {
-        // Smoothing esponenziale dinamico: reattività immediata a qualsiasi suono
-        final attackVolume = _targetVolume > _smoothVolume ? 0.36 : 0.14;
-        _smoothVolume += (_targetVolume - _smoothVolume) * attackVolume;
+    final energy = (_smoothVolume * 0.7 + _smoothTransient * 0.45).clamp(0.0, 1.0);
 
-        final attackTransient = _targetTransient > _smoothTransient ? 0.45 : 0.18;
-        _smoothTransient += (_targetTransient - _smoothTransient) * attackTransient;
+    // Rimbalzo elastico stile Shazam del pulsante centrale
+    final idleScale = 1.0 + math.sin(_time * 2.0) * 0.028;
+    final listeningScale = 1.0 +
+        math.sin(_flowPhase * 1.5) * 0.04 +
+        (_smoothVolume * 0.13) +
+        (_smoothTransient * 0.11);
+    final buttonScale = idleScale * (1.0 - _listeningBlend) + listeningScale * _listeningBlend;
 
-        if (_transientTriggered) {
-          _smoothTransient = 1.0;
-          _transientTriggered = false;
-        } else {
-          _smoothTransient *= 0.86; // Decadimento morbido a 60/120Hz
-        }
-
-        final phase = _ticker.value * 2 * math.pi;
-
-        // Livello sonoro complessivo combinato per la modulazione estetica
-        final soundActivity = (_smoothVolume * 0.75 + _smoothTransient * 0.35).clamp(0.0, 1.0);
-
-        // Espansione e respiro reattivo del pulsante centrale a OGNI suono
-        final membraneThump = widget.isListening
-            ? 1.0 + (_smoothVolume * 0.15) + (_smoothTransient * 0.10)
-            : (1.0 + math.sin(phase) * 0.025);
-
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: radarSize,
-              height: radarSize,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // 1. Rendering GPU ad alta efficienza: Onde fluide reattive a ogni suono
-                  CustomPaint(
-                    size: Size(radarSize, radarSize),
-                    painter: _FluidSonicPainter(
-                      phase: phase,
-                      volume: _smoothVolume,
-                      transient: _smoothTransient,
-                      isListening: widget.isListening,
-                      sparks: _sparks,
-                    ),
-                  ),
-
-                  // 2. Lente Olografica Centrale con Riflesso Speculare 3D
-                  Transform.scale(
-                    scale: membraneThump,
-                    child: Container(
-                      width: 106 * scale,
-                      height: 106 * scale,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          center: const Alignment(-0.35, -0.38),
-                          radius: 0.9,
-                          colors: widget.isListening
-                              ? [
-                                  Color.lerp(
-                                    const Color(0xFF2DD4BF),
-                                    const Color(0xFF34D399),
-                                    soundActivity,
-                                  )!,
-                                  Color.lerp(
-                                    const Color(0xFF0F766E),
-                                    const Color(0xFF0D9488),
-                                    soundActivity,
-                                  )!,
-                                  const Color(0xFF041D1D),
-                                ]
-                              : const [
-                                  Color(0xFF1E293B),
-                                  Color(0xFF0F172A),
-                                  Color(0xFF050811),
-                                ],
-                          stops: const [0.0, 0.58, 1.0],
-                        ),
-                        border: Border.all(
-                          color: widget.isListening
-                              ? Color.lerp(
-                                  AppTheme.accentMint.withValues(alpha: 0.75),
-                                  AppTheme.accentGold.withValues(alpha: 0.95),
-                                  soundActivity,
-                                )!
-                              : const Color(0xFF334155),
-                          width: (1.8 + soundActivity * 0.8) * scale,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: widget.isListening
-                                ? Color.lerp(
-                                    AppTheme.accentMint.withValues(alpha: 0.35 + soundActivity * 0.25),
-                                    AppTheme.accentGold.withValues(alpha: 0.6),
-                                    soundActivity,
-                                  )!
-                                : Colors.black45,
-                            blurRadius: (14.0 + soundActivity * 22.0) * scale,
-                            spreadRadius: (1.0 + soundActivity * 3.0) * scale,
-                          ),
-                        ],
-                      ),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // Riflesso speculare a cupola in vetro satinato
-                          Positioned(
-                            top: 8 * scale,
-                            left: 18 * scale,
-                            right: 18 * scale,
-                            height: 26 * scale,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(20),
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    Colors.white.withValues(alpha: widget.isListening ? 0.32 : 0.15),
-                                    Colors.white.withValues(alpha: 0.0),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-
-                          // Equalizzatore fluido cinetico a 5 bande: danza con ogni frequenza sonora
-                          if (widget.isListening)
-                            CustomPaint(
-                              size: Size(54 * scale, 38 * scale),
-                              painter: _CoreEqualizerPainter(
-                                volume: _smoothVolume,
-                                transient: _smoothTransient,
-                                phase: phase,
-                              ),
-                            )
-                          else
-                            Icon(
-                              Icons.mic_rounded,
-                              size: (44 * scale).clamp(20.0, 50.0),
-                              color: AppTheme.textPrimary,
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            if (widget.showBadge && widget.isListening) ...[
-              const SizedBox(height: 10),
-              // Badge di feedback acustico in tempo reale per qualsiasi suono
-              Builder(
-                builder: (context) {
-                  final isLively = soundActivity > 0.35;
-                  final isDetected = _isSoundActive || _smoothVolume > 0.12;
-
-                  final label = isDetected
-                      ? (_smoothTransient > 0.4
-                          ? 'DINAMICA / RITMO · ${_currentDb.toStringAsFixed(0)} dB'
-                          : 'SUONO RILEVATO · ${_currentDb.toStringAsFixed(0)} dB')
-                      : 'IN ASCOLTO · ${_currentDb.toStringAsFixed(0)} dB';
-
-                  final badgeColor = isLively
-                      ? AppTheme.accentGold
-                      : (isDetected ? AppTheme.accentMint : AppTheme.textMuted);
-
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: isLively
-                          ? AppTheme.accentGold.withValues(alpha: 0.15)
-                          : AppTheme.surfaceLight,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: isLively
-                            ? AppTheme.accentGold.withValues(alpha: 0.5)
-                            : AppTheme.border,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          isDetected ? Icons.graphic_eq_rounded : Icons.mic_rounded,
-                          size: 12,
-                          color: badgeColor,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          label,
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.4,
-                            color: badgeColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ],
-
-            if (widget.showStatusText && widget.statusText.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  widget.statusText,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: widget.isListening ? AppTheme.accentMint : AppTheme.textSecondary,
-                    letterSpacing: 0.1,
-                    height: 1.35,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: canvasSize,
+          height: canvasSize,
+          child: RepaintBoundary(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // 1. Pittore Custom: Anelli d'urto Shazam + Petali di Seta Liquida 3D + Cometa Radar
+                CustomPaint(
+                  size: Size(canvasSize, canvasSize),
+                  painter: _SiriShazamSilkPainter(
+                    time: _time,
+                    flowPhase: _flowPhase,
+                    pulseCycle: _pulseCycle,
+                    volume: _smoothVolume,
+                    transient: _smoothTransient,
+                    listeningBlend: _listeningBlend,
+                    petals: _petals,
                   ),
                 ),
+
+                // 2. Bottone Centrale a Capsula Magnetica con Icona Microfono Sempre Visibile
+                Transform.scale(
+                  scale: buttonScale,
+                  child: Container(
+                    width: 96 * scale,
+                    height: 96 * scale,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color.lerp(
+                            const Color(0xFF1E293B),
+                            Color.lerp(
+                              const Color(0xFF00F5D4),
+                              const Color(0xFF6366F1),
+                              0.5 + 0.5 * math.sin(_flowPhase * 0.7),
+                            )!,
+                            _listeningBlend,
+                          )!,
+                          Color.lerp(
+                            const Color(0xFF0F172A),
+                            const Color(0xFF0F172A),
+                            _listeningBlend,
+                          )!,
+                        ],
+                      ),
+                      border: Border.all(
+                        color: Color.lerp(
+                          Colors.white.withValues(alpha: 0.18),
+                           Colors.white.withValues(alpha: 0.65 + energy * 0.35),
+                          _listeningBlend,
+                        )!,
+                        width: (1.6 + energy * 1.2) * scale,
+                      ),
+                    ),
+                    child: Center(
+                      child: Transform.scale(
+                        scale: 1.0 + (_smoothTransient * 0.16 * _listeningBlend),
+                        child: Icon(
+                          Icons.mic_rounded,
+                          size: (42 * scale).clamp(22.0, 50.0),
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        if (widget.showBadge && widget.isListening) ...[
+          const SizedBox(height: 10),
+          Builder(
+            builder: (context) {
+              final isLively = energy > 0.36;
+              final isDetected = _isSoundActive || _smoothVolume > 0.22;
+
+              final label = isDetected
+                  ? (_smoothTransient > 0.42
+                      ? 'RITMO RILEVATO · ${_currentDb.toStringAsFixed(0)} dB'
+                      : 'ONDA SONORA ATTIVA · ${_currentDb.toStringAsFixed(0)} dB')
+                  : 'ASCOLTO AMBIENTALE ATTIVO';
+
+              final badgeColor = isLively
+                  ? AppTheme.accentGold
+                  : (isDetected ? AppTheme.accentMint : const Color(0xFF818CF8));
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: badgeColor.withValues(alpha: 0.55),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isDetected ? Icons.waves_rounded : Icons.radar_rounded,
+                      size: 13,
+                      color: badgeColor,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                        color: badgeColor,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+
+        if (widget.showStatusText && widget.statusText.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              widget.statusText,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: widget.isListening ? AppTheme.accentMint : AppTheme.textSecondary,
+                letterSpacing: 0.1,
+                height: 1.35,
               ),
-            ],
-          ],
-        );
-      },
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
 
-/// Disegna l'equalizzatore a 5 barre fluide all'interno della lente, animato da qualsiasi suono rilevato
-class _CoreEqualizerPainter extends CustomPainter {
+class _SiriShazamSilkPainter extends CustomPainter {
+  final double time;
+  final double flowPhase;
+  final double pulseCycle;
   final double volume;
   final double transient;
-  final double phase;
+  final double listeningBlend;
+  final List<_SilkPetalSpec> petals;
 
-  _CoreEqualizerPainter({
+  _SiriShazamSilkPainter({
+    required this.time,
+    required this.flowPhase,
+    required this.pulseCycle,
     required this.volume,
     required this.transient,
-    required this.phase,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const int barCount = 5;
-    final barWidth = size.width / (barCount * 1.85);
-    final gap = barWidth * 0.75;
-    final totalWidth = (barCount * barWidth) + ((barCount - 1) * gap);
-    final startX = (size.width - totalWidth) / 2;
-
-    for (int i = 0; i < barCount; i++) {
-      // Ciascuna barra risponde armonicamente alla presenza di suono/voce/strumenti
-      final harmonic = math.sin(phase * 2.2 + (i * 1.15)).abs() * (0.08 + volume * 0.26);
-      final bandWeight = switch (i) {
-        0 => 0.85, // Bassi / ritmica
-        1 => 1.05, // Medi bassi (chitarre / corpo musicale)
-        2 => 1.25, // Voce / melodia solista (barra centrale prominente)
-        3 => 1.05, // Medi alti (presenza vocale / ottoni)
-        _ => 0.85, // Alti / brillantezza
-      };
-
-      // In assenza di suono, le barre restano in elegante riposo compatto (~15%)
-      final baseRest = 0.14 + (math.sin(phase + i) * 0.02);
-      final soundRaise = (volume * bandWeight * 0.66) + (transient * 0.22 * (i == 2 ? 1.0 : 0.7));
-      final ratio = (baseRest + soundRaise + harmonic).clamp(0.12, 1.0);
-
-      final barH = size.height * ratio;
-      final x = startX + i * (barWidth + gap);
-      final y = (size.height - barH) / 2;
-
-      final rect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(x, y, barWidth, barH),
-        Radius.circular(barWidth / 2),
-      );
-
-      final barActivity = (volume * 0.75 + transient * 0.35).clamp(0.0, 1.0);
-      final barColor = Color.lerp(
-        const Color(0xFF03101C),
-        (i == 2 ? const Color(0xFFFDE68A) : const Color(0xFF2DD4BF)),
-        (0.25 + barActivity * 0.75).clamp(0.0, 1.0),
-      )!;
-
-      final paint = Paint()
-        ..color = barColor
-        ..style = PaintingStyle.fill;
-
-      canvas.drawRRect(rect, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _CoreEqualizerPainter oldDelegate) => true;
-}
-
-/// Disegna le onde fluide armoniche e le particelle orbitanti con smoothing a 120 FPS
-class _FluidSonicPainter extends CustomPainter {
-  final double phase;
-  final double volume;
-  final double transient;
-  final bool isListening;
-  final List<_SoundSpark> sparks;
-
-  _FluidSonicPainter({
-    required this.phase,
-    required this.volume,
-    required this.transient,
-    required this.isListening,
-    required this.sparks,
+    required this.listeningBlend,
+    required this.petals,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final scale = size.width / 260.0;
-    final maxR = (size.width / 2) - 2;
+    final scale = size.width / 276.0;
+    final maxR = (size.width / 2) - 4.0;
 
-    if (!isListening) {
-      // In modalità riposo: sottili anelli di respiro sereno
-      final idle1 = Paint()
-        ..color = AppTheme.accentMint.withValues(alpha: 0.12)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2 * scale;
-      canvas.drawCircle(center, 64 * scale, idle1);
+    // 1. Halo Atmosferico Multicolore
+    final haloR = (68.0 +
+            math.sin(time * 2.0) * 6.0 +
+            (volume * 44.0 + transient * 22.0) * listeningBlend) *
+        scale;
+    final haloShader = RadialGradient(
+      colors: [
+        const Color(0xFF00F5D4).withValues(alpha: 0.16 + listeningBlend * 0.22),
+        const Color(0xFF6366F1).withValues(alpha: 0.10 + listeningBlend * 0.16),
+        Colors.transparent,
+      ],
+      stops: const [0.0, 0.55, 1.0],
+    ).createShader(Rect.fromCircle(center: center, radius: haloR.clamp(20.0, maxR)));
 
-      final idle2 = Paint()
-        ..color = AppTheme.accentMint.withValues(alpha: 0.05)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0 * scale;
-      canvas.drawCircle(center, 80 * scale, idle2);
-      return;
+    canvas.drawCircle(center, haloR.clamp(20.0, maxR), Paint()..shader = haloShader);
+
+    // 2. Anelli Sottili di Riposo (Idle)
+    if (listeningBlend < 0.99) {
+      final idleAlpha = (1.0 - listeningBlend).clamp(0.0, 1.0);
+      for (int i = 0; i < 3; i++) {
+        final waveR = (58.0 + i * 16.0 + math.sin(time * 1.8 - i * 0.9) * 3.5) * scale;
+        final idlePaint = Paint()
+          ..color = const Color(0xFF38BDF8).withValues(alpha: (0.20 - i * 0.05) * idleAlpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4 * scale;
+        canvas.drawCircle(center, waveR, idlePaint);
+      }
+      if (listeningBlend <= 0.01) return;
     }
 
-    // ── 1. Alone Magnetico di Sfondo che respira col volume sonoro ────────────
-    final auraR = (72.0 + volume * 36.0 + (transient * 16.0)) * scale;
-    final auraPaint = Paint()
-      ..color = (transient > 0.4 ? AppTheme.accentGold : AppTheme.accentMint)
-          .withValues(alpha: (0.14 + volume * 0.22).clamp(0.0, 0.45))
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 18 * scale);
-    canvas.drawCircle(center, auraR, auraPaint);
+    // 3. Onde d'Urto Concentriche Perfette (Stile Shazam Pulse)
+    const int ringCount = 4;
+    for (int i = 0; i < ringCount; i++) {
+      final prog = (pulseCycle + (i / ringCount)) % 1.0;
+      final eased = 1.0 - math.pow(1.0 - prog, 2.6).toDouble();
+      final r = (48.0 * scale) + (maxR - 48.0 * scale) * eased;
+      final ringAlpha = ((1.0 - prog) * (0.48 + volume * 0.38) * listeningBlend).clamp(0.0, 0.85);
 
-    // ── 2. Onda Shockwave sui Picchi Sonori e Dinamici ────────────────────────
-    if (transient > 0.06 || volume > 0.45) {
-      final intensity = math.max(transient, volume * 0.7);
-      final shockR = (66.0 + (1.0 - intensity) * 54.0) * scale;
-      final shockAlpha = (intensity * 0.65).clamp(0.0, 0.95);
-      final shockPaint = Paint()
-        ..color = (transient > 0.35 ? AppTheme.accentGold : AppTheme.accentMint)
-            .withValues(alpha: shockAlpha)
+      final ringColor = Color.lerp(
+        const Color(0xFF00F5D4),
+        const Color(0xFF6366F1),
+        prog,
+      )!.withValues(alpha: ringAlpha);
+
+      final ringPaint = Paint()
+        ..color = ringColor
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.8 * scale;
-      canvas.drawCircle(center, shockR.clamp(0.0, maxR), shockPaint);
+        ..strokeWidth = (2.8 * (1.0 - prog * 0.65)) * scale;
+
+      canvas.drawCircle(center, r, ringPaint);
     }
 
-    // ── 3. Onda Fluida Esterna Armonica (Menta Liquida Reattiva al Suono) ──────
-    _drawSmoothFluidWave(
-      canvas: canvas,
-      center: center,
-      baseRadius: (82.0 + volume * 10.0) * scale,
-      amp1: (4.5 + volume * 18.0) * scale,
-      amp2: (3.0 + volume * 12.0 + transient * 6.0) * scale,
-      harmonics1: 3,
-      harmonics2: 5,
-      phaseOffset: phase,
-      strokeColor: AppTheme.accentMint.withValues(alpha: 0.55 + volume * 0.4),
-      fillColor: AppTheme.accentMint.withValues(alpha: 0.03 + volume * 0.07),
-      strokeWidth: 2.0 * scale,
-      maxR: maxR,
-    );
-
-    // ── 4. Onda Fluida Interna Dinamica (Oro Caldo / Turchese) ────────────────
-    _drawSmoothFluidWave(
-      canvas: canvas,
-      center: center,
-      baseRadius: (70.0 + volume * 6.0) * scale,
-      amp1: (3.5 + volume * 15.0) * scale,
-      amp2: (2.5 + transient * 14.0) * scale,
-      harmonics1: 4,
-      harmonics2: 2,
-      phaseOffset: -phase * 1.25,
-      strokeColor: transient > 0.35
-          ? AppTheme.accentGold.withValues(alpha: 0.95)
-          : AppTheme.accentGold.withValues(alpha: 0.35 + volume * 0.5),
-      fillColor: transient > 0.35
-          ? AppTheme.accentGold.withValues(alpha: 0.12)
-          : AppTheme.accentGold.withValues(alpha: 0.03),
-      strokeWidth: (transient > 0.35 ? 2.5 : 1.5) * scale,
-      maxR: maxR,
-    );
-
-    // ── 5. Scintille Quantiche Sonore Orbitanti con Velocità Dinamica ──────────
-    final sparkMint = Paint()
-      ..color = AppTheme.accentMint.withValues(alpha: 0.85)
-      ..style = PaintingStyle.fill;
-
-    final sparkGold = Paint()
-      ..color = AppTheme.accentGold.withValues(alpha: 0.9)
-      ..style = PaintingStyle.fill;
-
-    for (final s in sparks) {
-      final speedBoost = 1.0 + (volume * 1.2);
-      final angle = s.angleOffset + (phase * s.speed * speedBoost);
-      final r = (s.orbitRatio * 92.0 * scale) + (volume * 24.0 * scale) + (transient * 10.0 * scale);
-      final px = center.dx + math.cos(angle) * r;
-      final py = center.dy + math.sin(angle) * r;
-
-      final sSize = (s.size * scale * (1.0 + volume * 0.5 + transient * 0.3)).clamp(1.2, 4.6);
-      canvas.drawCircle(Offset(px, py), sSize, s.isGold ? sparkGold : sparkMint);
+    // 4. Petali di Seta Liquida 3D (Siri Morphing Blobs)
+    for (final petal in petals) {
+      _drawSilkPetal(
+        canvas: canvas,
+        center: center,
+        scale: scale,
+        maxR: maxR,
+        spec: petal,
+      );
     }
+
+    // 5. Scia Radar a Cometa Rotante sul Perimetro Esterno
+    final sweepRadius = (108.0 + volume * 10.0) * scale;
+    final sweepAngle = flowPhase * 1.35;
+    final arcRect = Rect.fromCircle(center: center, radius: sweepRadius.clamp(30.0, maxR));
+    final sweepPaint = Paint()
+      ..shader = SweepGradient(
+        transform: GradientRotation(sweepAngle),
+        colors: [
+          Colors.transparent,
+          const Color(0xFF00F5D4).withValues(alpha: 0.15 * listeningBlend),
+          const Color(0xFFF6C974).withValues(alpha: 0.85 * listeningBlend),
+        ],
+        stops: const [0.0, 0.65, 1.0],
+      ).createShader(arcRect)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2.4 * scale;
+
+    canvas.drawArc(arcRect, sweepAngle + math.pi * 0.8, math.pi * 1.15, false, sweepPaint);
   }
 
-  void _drawSmoothFluidWave({
+  void _drawSilkPetal({
     required Canvas canvas,
     required Offset center,
-    required double baseRadius,
-    required double amp1,
-    required double amp2,
-    required int harmonics1,
-    required int harmonics2,
-    required double phaseOffset,
-    required Color strokeColor,
-    required Color fillColor,
-    required double strokeWidth,
+    required double scale,
     required double maxR,
+    required _SilkPetalSpec spec,
   }) {
     final path = Path();
-    const int steps = 48; // Ottimizzato per 120 FPS senza sovraccaricare la GPU
+    const int steps = 72;
     const double stepAngle = (2 * math.pi) / steps;
 
+    final baseR = (54.0 * spec.baseScale + volume * 22.0 + transient * 12.0) * scale;
+    final lobeAmp = (8.0 + volume * 18.0 + transient * 14.0) * scale * listeningBlend;
+    final secondaryAmp = (4.0 + volume * 9.0) * scale * listeningBlend;
+    final rotation = flowPhase * spec.speedMultiplier + spec.phaseOffset;
+
     for (int i = 0; i <= steps; i++) {
-      final theta = i * stepAngle;
-      final wave1 = math.sin(theta * harmonics1 + phaseOffset) * amp1;
-      final wave2 = math.cos(theta * harmonics2 - phaseOffset * 0.8) * amp2;
-      final r = (baseRadius + wave1 + wave2).clamp(30.0, maxR);
+      final idx = i % steps;
+      final theta = idx * stepAngle;
+
+      final lobe = math.sin(theta * spec.lobeCount + rotation) * lobeAmp;
+      final twist = math.cos(theta * (spec.lobeCount + 1) - rotation * 1.3) * secondaryAmp;
+      final r = (baseR + lobe + twist).clamp(32.0 * scale, maxR - 6.0 * scale);
 
       final x = center.dx + math.cos(theta) * r;
       final y = center.dy + math.sin(theta) * r;
@@ -592,19 +540,28 @@ class _FluidSonicPainter extends CustomPainter {
     }
     path.close();
 
+    final rect = Rect.fromCircle(center: center, radius: baseR + lobeAmp);
+    final fillGradient = LinearGradient(
+      begin: Alignment(math.cos(rotation), math.sin(rotation)),
+      end: Alignment(-math.cos(rotation), -math.sin(rotation)),
+      colors: [
+        spec.primaryColor.withValues(alpha: (0.28 + volume * 0.24) * listeningBlend),
+        spec.secondaryColor.withValues(alpha: (0.14 + transient * 0.20) * listeningBlend),
+      ],
+    );
+
     final fillPaint = Paint()
-      ..color = fillColor
+      ..shader = fillGradient.createShader(rect)
       ..style = PaintingStyle.fill;
     canvas.drawPath(path, fillPaint);
 
-    final strokePaint = Paint()
-      ..color = strokeColor
+    final borderPaint = Paint()
+      ..color = spec.primaryColor.withValues(alpha: (0.68 + volume * 0.28) * listeningBlend)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
-    canvas.drawPath(path, strokePaint);
+      ..strokeWidth = 1.8 * scale;
+    canvas.drawPath(path, borderPaint);
   }
 
   @override
-  bool shouldRepaint(covariant _FluidSonicPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _SiriShazamSilkPainter oldDelegate) => true;
 }

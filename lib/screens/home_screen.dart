@@ -77,16 +77,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _safeDeleteFile(String path) {
-    try {
-      final f = File(path);
-      if (f.existsSync()) f.deleteSync();
-    } catch (_) {}
+    unawaited(
+      Future(() async {
+        try {
+          final f = File(path);
+          if (await f.exists()) {
+            await f.delete();
+          }
+        } catch (_) {}
+      }),
+    );
   }
 
   /// Interrompe manualmente l'ascolto continuo su richiesta dell'utente
   void _cancelListening() {
     _countdownTimer?.cancel();
-    _audioRecorder.stopListening();
+    _audioRecorder.stopListening(resetNotifiers: true);
     if (mounted) {
       setState(() {
         _isListening = false;
@@ -96,6 +102,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Avvia la cattura audio continua da microfono finché non trova un brano (timeout max 30s)
+  /// Usa una pipeline sovrapposta: mentre invia il campione N al riconoscimento di rete,
+  /// il microfono continua immediatamente ad ascoltare il campione N+1 senza mai fermare l'animazione.
   Future<void> _startListening() async {
     if (_isListening) return;
 
@@ -134,72 +142,105 @@ class _HomeScreenState extends State<HomeScreen> {
     int attempt = 0;
     SyncedSong? recognizedSong;
     String? lastErrorMsg;
+    bool rateLimitHit = false;
+    String? rateLimitMessage;
+    Future<void>? pendingRecognitionTask;
 
-    while (mounted && _isListening && DateTime.now().isBefore(deadline)) {
-      attempt++;
-      final remainingMs = deadline.difference(DateTime.now()).inMilliseconds;
-      if (remainingMs < 3000) {
-        // Meno di 3 secondi rimanenti, tempo insufficiente per un fingerprint valido
-        break;
-      }
+    try {
+      // Avvia subito il primo ciclo di ascolto microfono
+      String? activeSamplePath = await _audioRecorder.startListening();
 
-      final chunkDurationMs = _selectedEnvironment.sampleDurationMs.clamp(3500, remainingMs);
-
-      String? samplePath;
-      DateTime? recordingEndedAt;
-
-      try {
-        samplePath = await _audioRecorder.startListening();
-        await Future.delayed(Duration(milliseconds: chunkDurationMs));
-
-        if (!mounted || !_isListening) {
-          await _audioRecorder.stopListening();
-          if (samplePath != null) _safeDeleteFile(samplePath);
+      while (mounted && _isListening && recognizedSong == null && !rateLimitHit && DateTime.now().isBefore(deadline)) {
+        attempt++;
+        final remainingMs = deadline.difference(DateTime.now()).inMilliseconds;
+        if (remainingMs < 2500) {
           break;
         }
 
-        recordingEndedAt = DateTime.now();
-        await _audioRecorder.stopListening();
+        final chunkDurationMs = _selectedEnvironment.sampleDurationMs.clamp(3200, remainingMs);
 
-        if (samplePath == null) continue;
+        if (activeSamplePath == null) {
+          activeSamplePath = await _audioRecorder.startListening();
+        }
 
-        try {
-          final song = await _recognitionService.recognizeFromAudioSample(
-            sampleAudioPath: samplePath,
-            recordingEndedAt: recordingEndedAt,
-            environment: _selectedEnvironment,
-          );
-          recognizedSong = song;
-          _safeDeleteFile(samplePath);
-          break; // BRANO TROVATO! Esci subito dal ciclo e apri il testo
-        } on SongNotRecognizedException catch (e) {
-          lastErrorMsg = e.message;
-          _safeDeleteFile(samplePath);
-          debugPrint('Tentativo $attempt non riuscito: ${e.message}. Continuo ascolto...');
-          // Continua con il prossimo ciclo di ascolto finché non scadono i 30s
+        // Attendi la finestra di campionamento lasciando scorrere il microfono in tempo reale
+        await Future.delayed(Duration(milliseconds: chunkDurationMs));
+
+        if (!mounted || !_isListening || recognizedSong != null || rateLimitHit) {
+          break;
         }
-      } on AudDRateLimitException catch (e) {
-        _countdownTimer?.cancel();
-        await _audioRecorder.stopListening();
-        if (samplePath != null) _safeDeleteFile(samplePath);
-        if (mounted) {
-          setState(() {
-            _isListening = false;
-            _statusText = 'Tocca per ascoltare e sincronizzare il testo';
-          });
-          _showApiKeyDialog(alertMessage: e.message);
+
+        final recordingEndedAt = DateTime.now();
+        final completedPath = await _audioRecorder.stopListening(resetNotifiers: false);
+        activeSamplePath = null;
+
+        // Riavvia IMMEDIATAMENTE il microfono per il blocco successivo così non c'è mai pausa!
+        if (mounted && _isListening && deadline.difference(DateTime.now()).inMilliseconds >= 2500) {
+          try {
+            activeSamplePath = await _audioRecorder.startListening();
+          } catch (_) {}
         }
-        return;
-      } catch (e) {
-        debugPrint('Errore durante campionamento tentativo $attempt: $e');
-        await _audioRecorder.stopListening();
-        if (samplePath != null) _safeDeleteFile(samplePath);
-        await Future.delayed(const Duration(milliseconds: 300));
+
+        if (completedPath == null) continue;
+
+        // Attendi eventuale analisi precedente prima di lanciare la nuova in background
+        if (pendingRecognitionTask != null) {
+          await pendingRecognitionTask;
+          if (recognizedSong != null || rateLimitHit || !mounted || !_isListening) {
+            _safeDeleteFile(completedPath);
+            break;
+          }
+        }
+
+        final currentAttempt = attempt;
+        pendingRecognitionTask = () async {
+          try {
+            final song = await _recognitionService.recognizeFromAudioSample(
+              sampleAudioPath: completedPath,
+              recordingEndedAt: recordingEndedAt,
+              environment: _selectedEnvironment,
+            );
+            recognizedSong = song;
+            _safeDeleteFile(completedPath);
+          } on SongNotRecognizedException catch (e) {
+            lastErrorMsg = e.message;
+            _safeDeleteFile(completedPath);
+            debugPrint('Tentativo $currentAttempt non riuscito: ${e.message}. Continuo ascolto...');
+          } on AudDRateLimitException catch (e) {
+            rateLimitHit = true;
+            rateLimitMessage = e.message;
+            _safeDeleteFile(completedPath);
+          } catch (e) {
+            debugPrint('Errore durante analisi tentativo $currentAttempt: $e');
+            _safeDeleteFile(completedPath);
+          }
+        }();
       }
+
+      // Se l'ultimo task di riconoscimento è ancora in volo, attendilo mentre il microfono resta animato
+      if (pendingRecognitionTask != null && recognizedSong == null && !rateLimitHit && _isListening) {
+        await pendingRecognitionTask;
+      }
+
+      if (activeSamplePath != null) {
+        final leftover = await _audioRecorder.stopListening(resetNotifiers: true);
+        if (leftover != null) _safeDeleteFile(leftover);
+      }
+    } catch (e) {
+      debugPrint('Errore ciclo ascolto: $e');
     }
 
     _countdownTimer?.cancel();
-    await _audioRecorder.stopListening();
+    await _audioRecorder.stopListening(resetNotifiers: true);
+
+    if (rateLimitHit && mounted) {
+      setState(() {
+        _isListening = false;
+        _statusText = 'Tocca per ascoltare e sincronizzare il testo';
+      });
+      _showApiKeyDialog(alertMessage: rateLimitMessage);
+      return;
+    }
 
     if (!mounted) return;
 

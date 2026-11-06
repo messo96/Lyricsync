@@ -154,14 +154,16 @@ class AudioRecorderService {
   }
 
   /// Ferma la registrazione e restituisce il percorso del file audio campionato
-  Future<String?> stopListening() async {
+  Future<String?> stopListening({bool resetNotifiers = true}) async {
     if (!_isRecording) return null;
 
     _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
     _isRecording = false;
-    acousticNotifier.value = const AcousticState();
-    amplitudeNotifier.value = -45.0;
+    if (resetNotifiers) {
+      acousticNotifier.value = const AcousticState();
+      amplitudeNotifier.value = -45.0;
+    }
 
     final recordedPath = await _recorder.stop();
     return recordedPath;

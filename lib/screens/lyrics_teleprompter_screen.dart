@@ -148,7 +148,7 @@ class _LyricsTeleprompterScreenState extends State<LyricsTeleprompterScreen> {
         }
 
         recordingEndedAt = DateTime.now();
-        await _audioRecorder.stopListening();
+        await _audioRecorder.stopListening(resetNotifiers: false);
 
         if (samplePath == null) continue;
 

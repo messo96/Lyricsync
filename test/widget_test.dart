@@ -1,9 +1,12 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lyricsync/data/concert_setlists.dart';
 import 'package:lyricsync/main.dart';
 import 'package:lyricsync/models/synced_song.dart';
+import 'package:lyricsync/services/audio_recorder_service.dart';
 import 'package:lyricsync/services/music_recognition_service.dart';
 import 'package:lyricsync/services/realtime_lyrics_sync_controller.dart';
+import 'package:lyricsync/widgets/pulsing_waveform.dart';
 
 void main() {
   testWidgets('LyricSyncApp smoke test: verifies initial load', (WidgetTester tester) async {
@@ -61,5 +64,47 @@ void main() {
     // Null / Empty
     expect(MusicRecognitionService.parseTimecode(null), Duration.zero);
     expect(MusicRecognitionService.parseTimecode(''), Duration.zero);
+  });
+
+  testWidgets('PulsingWaveform animates continuously without stalling across frames', (WidgetTester tester) async {
+    final acousticNotifier = ValueNotifier<AcousticState>(const AcousticState());
+    final amplitudeNotifier = ValueNotifier<double>(-45.0);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PulsingWaveform(
+            isListening: true,
+            acousticNotifier: acousticNotifier,
+            amplitudeNotifier: amplitudeNotifier,
+            statusText: 'Ascolto (28s)... Rilevamento in corso',
+          ),
+        ),
+      ),
+    );
+
+    // Pump several frames to verify delta-time ticker advances smoothly
+    for (int i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    // Trigger a dynamic sound peak / transient hit
+    acousticNotifier.value = const AcousticState(
+      currentDb: -16.0,
+      normalized: 0.85,
+      soundIntensity: 0.88,
+      isSoundActive: true,
+      isTransientHit: true,
+      transientIntensity: 0.92,
+    );
+
+    for (int i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(find.textContaining('RITMO RILEVATO'), findsOneWidget);
+
+    acousticNotifier.dispose();
+    amplitudeNotifier.dispose();
   });
 }
